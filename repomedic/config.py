@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     docker_memory_limit: str = "512m"
     docker_cpu_limit: float = 1.0
     docker_pids_limit: int = 64
+    allow_host_execution: bool = Field(
+        default=False,
+        description="Explicit developer override to allow local subprocess execution for trusted repositories when Docker is unavailable.",
+    )
 
     # Storage & Temporary Paths
     workspace_root: Path = Field(default_factory=lambda: Path(os.getcwd()))

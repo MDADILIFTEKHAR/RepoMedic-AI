@@ -192,7 +192,8 @@ async def health_check() -> Dict[str, Any]:
         ),
         "model_health": model_health,
         "docker_available": settings.is_docker_available,
-        "arbitrary_repo_repair_enabled": settings.is_docker_available and not settings.hosted_mode,
+        "allow_host_execution": settings.allow_host_execution,
+        "arbitrary_repo_repair_enabled": (settings.is_docker_available or settings.allow_host_execution) and not settings.hosted_mode,
         "github_oauth_configured": bool(settings.github_client_id and settings.github_client_secret),
         "timestamp": time.time(),
     }
@@ -541,7 +542,10 @@ async def _execute_repair_task(
     """Asynchronous background worker executing the Evidence-Gated Repair Harness."""
     settings = get_settings()
     model_client = create_model_client(settings)
-    sandbox_runner = create_sandbox_runner(timeout_seconds=settings.test_timeout_seconds)
+    sandbox_runner = create_sandbox_runner(
+        timeout_seconds=settings.test_timeout_seconds,
+        allow_host_execution=settings.allow_host_execution,
+    )
 
     def on_state_update(state: RepairState, message: str) -> None:
         if job_id in repair_jobs:
@@ -628,11 +632,11 @@ async def start_repair(
             )
         issue_desc = req.issue_description.strip()
 
-        # Sandbox check: arbitrary untrusted repo execution requires Docker
-        if not settings.is_docker_available and not settings.environment == "test":
+        # Sandbox check: arbitrary untrusted repo execution requires Docker unless explicitly overridden
+        if not settings.is_docker_available and not settings.allow_host_execution and not settings.environment == "test":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Docker is required for arbitrary repository test execution, but is unavailable on this host. Execution of untrusted code is blocked to prevent host compromise.",
+                detail="Docker is required for arbitrary repository test execution, but is unavailable on this host. Execution of untrusted code is blocked to prevent host compromise. Start Docker Desktop, switch to Predefined Fixtures, or set REPOMEDIC_ALLOW_HOST_EXECUTION=true to allow local execution.",
             )
 
     # 2. Local Repository Mode
@@ -651,10 +655,10 @@ async def start_repair(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Local repository path does not exist: {req.local_repo_path}",
             )
-        if not settings.is_docker_available and not settings.environment == "test":
+        if not settings.is_docker_available and not settings.allow_host_execution and not settings.environment == "test":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Docker is required for arbitrary repository test execution. Sandboxing is unavailable; arbitrary code execution is disabled to protect the host.",
+                detail="Docker is required for arbitrary repository test execution. Sandboxing is unavailable; arbitrary code execution is disabled to protect the host. Start Docker Desktop, switch to Predefined Fixtures, or set REPOMEDIC_ALLOW_HOST_EXECUTION=true to allow local execution.",
             )
         if not req.issue_description or not req.issue_description.strip():
             raise HTTPException(

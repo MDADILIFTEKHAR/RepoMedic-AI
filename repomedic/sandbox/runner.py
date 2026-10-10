@@ -165,9 +165,13 @@ class DockerSandboxRunner(BaseSandboxRunner):
 class SubprocessSandboxRunner(BaseSandboxRunner):
     """Restricted local subprocess runner.
 
-    ONLY permits execution for verified, predefined benchmark fixtures.
-    Strictly refuses arbitrary repositories when Docker is unavailable.
+    ONLY permits execution for verified, predefined benchmark fixtures,
+    unless explicitly overridden by allow_arbitrary_repo for trusted local environments.
     """
+
+    def __init__(self, timeout_seconds: float = 25.0, allow_arbitrary_repo: bool = False) -> None:
+        super().__init__(timeout_seconds=timeout_seconds)
+        self.allow_arbitrary_repo = allow_arbitrary_repo
 
     def run_tests(
         self,
@@ -175,7 +179,7 @@ class SubprocessSandboxRunner(BaseSandboxRunner):
         test_command: Optional[List[str]] = None,
         is_predefined_fixture: bool = False,
     ) -> TestExecutionResult:
-        if not is_predefined_fixture:
+        if not is_predefined_fixture and not self.allow_arbitrary_repo:
             raise SandboxUnavailableError(
                 "Security policy violation: Docker is unavailable or not running on this host. "
                 "Arbitrary repository code execution is strictly disabled to prevent host compromise. "
@@ -252,6 +256,7 @@ class SubprocessSandboxRunner(BaseSandboxRunner):
 def create_sandbox_runner(
     timeout_seconds: float = 25.0,
     force_docker: bool = False,
+    allow_host_execution: bool = False,
 ) -> BaseSandboxRunner:
     """Create sandbox runner according to host capabilities."""
     has_docker = shutil.which("docker") is not None
@@ -269,4 +274,7 @@ def create_sandbox_runner(
         except Exception:
             pass
 
-    return SubprocessSandboxRunner(timeout_seconds=timeout_seconds)
+    return SubprocessSandboxRunner(
+        timeout_seconds=timeout_seconds,
+        allow_arbitrary_repo=allow_host_execution,
+    )
