@@ -128,6 +128,11 @@ async def _execute_repair_task(job_id: str, repo_path: Path, issue_desc: str, is
     """Asynchronous background worker function executing the repair harness."""
     settings = get_settings()
     model_client = create_model_client(settings)
+    if settings.model_provider == "mock" and is_fixture:
+        matched_spec = next((t for t in BENCHMARK_TASKS if t.fixture_dir_name == repo_path.name), None)
+        if matched_spec and matched_spec.golden_patch:
+            from repomedic.models.mock_client import MockModelClient
+            model_client = MockModelClient(responses=[matched_spec.golden_patch])
     sandbox_runner = create_sandbox_runner(timeout_seconds=settings.test_timeout_seconds)
 
     def on_state_update(state: RepairState, message: str) -> None:
