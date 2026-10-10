@@ -39,3 +39,10 @@ def test_settings_singleton():
     s2 = get_settings()
     assert s1 is s2
     reset_settings(None)
+
+
+def test_sandbox_config():
+    s = Settings(sandbox_mode="auto", allow_host_execution=True)
+    assert s.is_sandbox_ready is True
+    assert s.active_sandbox_type in ("docker", "restricted_subprocess")
+

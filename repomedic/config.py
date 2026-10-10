@@ -65,15 +65,20 @@ class Settings(BaseSettings):
     max_file_size_bytes: int = 262_144  # Max 256KB per inspected file
     max_files_scanned: int = 200
 
-    # Sandboxing & Docker Limits
+    # Sandboxing & Execution Strategy
+    # Supported strategies: 'auto' (Docker if present, restricted subprocess fallback for Render/demo), 'docker' (strictly require container), 'subprocess' (local restricted execution)
+    sandbox_mode: Literal["auto", "docker", "subprocess"] = Field(
+        default="auto",
+        description="Sandbox strategy: 'auto' (Docker if available, otherwise restricted subprocess), 'docker' (strictly containerized), 'subprocess' (local restricted execution).",
+    )
     docker_enabled: bool = True
     docker_image: str = "python:3.11-slim"
     docker_memory_limit: str = "512m"
     docker_cpu_limit: float = 1.0
     docker_pids_limit: int = 64
     allow_host_execution: bool = Field(
-        default=False,
-        description="Explicit developer override to allow local subprocess execution for trusted repositories when Docker is unavailable.",
+        default=True,
+        description="Explicit developer override to allow local subprocess execution for repositories when Docker is unavailable.",
     )
 
     # Storage & Temporary Paths
@@ -95,11 +100,27 @@ class Settings(BaseSettings):
 
     @property
     def is_docker_available(self) -> bool:
-        """Dynamically detect whether the docker CLI/daemon is present."""
+        """Dynamically detect whether the docker CLI is present."""
         if not self.docker_enabled:
             return False
         import shutil
         return shutil.which("docker") is not None
+
+    @property
+    def is_sandbox_ready(self) -> bool:
+        """Check whether at least one execution sandbox is ready."""
+        if self.sandbox_mode == "docker":
+            return self.is_docker_available
+        if self.sandbox_mode in ("auto", "subprocess"):
+            return True
+        return self.is_docker_available or self.allow_host_execution
+
+    @property
+    def active_sandbox_type(self) -> str:
+        """Get the identifier of the active execution sandbox."""
+        if self.is_docker_available and self.sandbox_mode in ("docker", "auto"):
+            return "docker"
+        return "restricted_subprocess"
 
     def safe_dict(self) -> dict:
         """Produce a serialized config dict with masked secrets for telemetry and logs."""

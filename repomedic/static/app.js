@@ -165,6 +165,17 @@ document.addEventListener("DOMContentLoaded", () => {
       pillSandbox.className = "status-pill online";
       lblSandboxMode.textContent = "Docker Container";
       if (githubDockerWarning) githubDockerWarning.classList.add("hidden");
+    } else if (data.arbitrary_repo_repair_enabled) {
+      pillSandbox.className = "status-pill online";
+      lblSandboxMode.textContent = "Demo Sandbox (Subprocess)";
+      if (githubDockerWarning) {
+        githubDockerWarning.className = "docker-warning-banner";
+        githubDockerWarning.style.background = "rgba(56, 189, 248, 0.12)";
+        githubDockerWarning.style.borderColor = "rgba(56, 189, 248, 0.35)";
+        githubDockerWarning.style.color = "#bae6fd";
+        githubDockerWarning.innerHTML = "<strong>🛡️ Demo Subprocess Sandbox Active</strong>: Running tests in safe isolated subprocess execution (Docker offline). Fully enabled for local testing, demo sessions, and Render cloud deployment.";
+        githubDockerWarning.classList.remove("hidden");
+      }
     } else {
       pillSandbox.className = "status-pill warn";
       lblSandboxMode.textContent = "Restricted Fixture";

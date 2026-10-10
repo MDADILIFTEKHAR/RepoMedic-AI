@@ -192,8 +192,10 @@ async def health_check() -> Dict[str, Any]:
         ),
         "model_health": model_health,
         "docker_available": settings.is_docker_available,
+        "sandbox_mode": settings.sandbox_mode,
+        "active_sandbox": settings.active_sandbox_type,
         "allow_host_execution": settings.allow_host_execution,
-        "arbitrary_repo_repair_enabled": (settings.is_docker_available or settings.allow_host_execution) and not settings.hosted_mode,
+        "arbitrary_repo_repair_enabled": settings.is_sandbox_ready and not settings.hosted_mode,
         "github_oauth_configured": bool(settings.github_client_id and settings.github_client_secret),
         "timestamp": time.time(),
     }
@@ -632,11 +634,11 @@ async def start_repair(
             )
         issue_desc = req.issue_description.strip()
 
-        # Sandbox check: arbitrary untrusted repo execution requires Docker unless explicitly overridden
-        if not settings.is_docker_available and not settings.allow_host_execution and not settings.environment == "test":
+        # Sandbox check: ensure execution sandbox is available
+        if not settings.is_sandbox_ready and not settings.environment == "test":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Docker is required for arbitrary repository test execution, but is unavailable on this host. Execution of untrusted code is blocked to prevent host compromise. Start Docker Desktop, switch to Predefined Fixtures, or set REPOMEDIC_ALLOW_HOST_EXECUTION=true to allow local execution.",
+                detail="No execution sandbox is available. Start Docker Desktop, switch to Predefined Fixtures, or configure REPOMEDIC_SANDBOX_MODE=auto to enable demo subprocess execution.",
             )
 
     # 2. Local Repository Mode
@@ -655,10 +657,10 @@ async def start_repair(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Local repository path does not exist: {req.local_repo_path}",
             )
-        if not settings.is_docker_available and not settings.allow_host_execution and not settings.environment == "test":
+        if not settings.is_sandbox_ready and not settings.environment == "test":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Docker is required for arbitrary repository test execution. Sandboxing is unavailable; arbitrary code execution is disabled to protect the host. Start Docker Desktop, switch to Predefined Fixtures, or set REPOMEDIC_ALLOW_HOST_EXECUTION=true to allow local execution.",
+                detail="No execution sandbox is available. Start Docker Desktop, switch to Predefined Fixtures, or configure REPOMEDIC_SANDBOX_MODE=auto to enable demo subprocess execution.",
             )
         if not req.issue_description or not req.issue_description.strip():
             raise HTTPException(

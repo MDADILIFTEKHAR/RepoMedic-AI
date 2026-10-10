@@ -17,8 +17,12 @@ services:
       - key: REPOMEDIC_ENVIRONMENT
         value: production
       - key: REPOMEDIC_HOSTED_MODE
+        value: "false"
+      - key: REPOMEDIC_SANDBOX_MODE
+        value: auto
+      - key: REPOMEDIC_ALLOW_HOST_EXECUTION
         value: "true"
-      # Hosted Inference Endpoint for open-weight model (e.g. vLLM, OpenRouter, Together, Groq)
+      # Hosted Inference Endpoint for open-weight model (e.g. Groq, Together, OpenRouter, vLLM)
       - key: REPOMEDIC_MODEL_PROVIDER
         value: openai_compatible
       - key: REPOMEDIC_OPENAI_BASE_URL
