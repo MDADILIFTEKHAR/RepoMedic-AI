@@ -27,7 +27,7 @@ async def test_baseline_already_passing(tmp_path):
     )
 
     assert report.success is True
-    assert report.terminal_state == RepairState.COMPLETED_VERIFIED
+    assert report.terminal_state == RepairState.VERIFIED
     assert report.attempts_count == 0
 
 
@@ -58,9 +58,56 @@ async def test_one_shot_repair_success(tmp_path):
     )
 
     assert report.success is True
-    assert report.terminal_state == RepairState.COMPLETED_VERIFIED
+    assert report.terminal_state == RepairState.VERIFIED
     assert report.attempts_count == 1
     assert report.verified_patch.strip() == golden_diff.strip()
+
+
+@pytest.mark.asyncio
+async def test_state_machine_full_sequence(tmp_path):
+    """Test that the orchestrator transitions through the required real-world state machine."""
+    (tmp_path / "discount.py").write_text("def apply(p, r): return p * r\n", encoding="utf-8")
+    (tmp_path / "test_discount.py").write_text("from discount import apply\ndef test(): assert apply(100.0, 0.2) == 80.0\n", encoding="utf-8")
+
+    golden_diff = (
+        "--- a/discount.py\n"
+        "+++ b/discount.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-def apply(p, r): return p * r\n"
+        "+def apply(p, r): return p * (1.0 - r)\n"
+    )
+
+    states_visited = []
+
+    def on_state(state: RepairState, msg: str):
+        states_visited.append(state)
+
+    client = MockModelClient(responses=[golden_diff])
+    orch = EvidenceGatedOrchestrator(
+        model_client=client,
+        sandbox_runner=SubprocessSandboxRunner(),
+        on_state_change=on_state,
+    )
+
+    report = await orch.run_repair(
+        repo_path=tmp_path,
+        issue_description="Fix discount price calculation",
+        is_predefined_fixture=True,
+    )
+
+    assert report.success is True
+    expected_sequence = [
+        RepairState.CREATED,
+        RepairState.REPOSITORY_VALIDATED,
+        RepairState.BASELINE_TESTED,
+        RepairState.ANALYZED,
+        RepairState.PATCH_PROPOSED,
+        RepairState.PATCH_VALIDATED,
+        RepairState.PATCH_APPLIED,
+        RepairState.TESTED,
+        RepairState.VERIFIED,
+    ]
+    assert states_visited == expected_sequence
 
 
 @pytest.mark.asyncio
@@ -133,6 +180,6 @@ async def test_max_three_attempts_bound(tmp_path):
     )
 
     assert report.success is False
-    assert report.terminal_state == RepairState.FAILED_MAX_ATTEMPTS
+    assert report.terminal_state == RepairState.FAILED
     assert report.attempts_count == 3
     assert len(report.audit_history) == 3

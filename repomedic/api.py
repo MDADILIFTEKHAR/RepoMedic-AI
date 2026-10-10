@@ -1,7 +1,8 @@
 """FastAPI application for RepoMedic AI.
 
-Provides REST API endpoints for health status, benchmark task inspection,
-background repair job execution, evaluation metrics, and serves the developer frontend.
+Provides REST API endpoints for GitHub OAuth & repository inspection,
+background repair job execution, verified patch/report downloads,
+explicitly approved Pull Request creation, and serves the developer frontend.
 """
 
 from __future__ import annotations
@@ -11,10 +12,10 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,9 +23,21 @@ from pydantic import BaseModel, Field
 
 from repomedic import __version__
 from repomedic.config import Settings, get_settings
-from repomedic.evaluation.benchmark import BENCHMARK_TASKS, BenchmarkRunner, BenchmarkTaskSpec
+from repomedic.evaluation.benchmark import BENCHMARK_TASKS, BenchmarkRunner
+from repomedic.github.client import (
+    GitHubAuthenticationError,
+    GitHubClient,
+    GitHubError,
+    GitHubPermissionError,
+    GitHubResourceNotFoundError,
+    GitHubValidationError,
+    redact_token,
+    validate_github_identifier,
+    validate_repository_name,
+)
 from repomedic.models import create_model_client
 from repomedic.orchestrator import EvidenceGatedOrchestrator, RepairSessionReport, RepairState
+from repomedic.repository.worktree import DisposableWorkspace
 from repomedic.sandbox.runner import create_sandbox_runner
 
 logger = logging.getLogger("repomedic.api")
@@ -44,22 +57,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory repair job registry
+# In-memory repair job and auth state registry
 repair_jobs: Dict[str, Dict[str, Any]] = {}
-executor = ThreadPoolExecutor(max_workers=4)
+oauth_states: Dict[str, float] = {}
+github_client = GitHubClient()
+
+
+# -----------------------------------------------------------------------------
+# Request & Response Models
+# -----------------------------------------------------------------------------
+
+class GitHubAuthRequest(BaseModel):
+    """Payload to validate and store a Personal Access Token or session token."""
+    token: str = Field(..., description="GitHub Personal Access Token (classic or fine-grained)")
+
+
+class GitHubOAuthCallbackRequest(BaseModel):
+    """Payload from GitHub OAuth redirect callback."""
+    code: str
+    state: Optional[str] = None
 
 
 class RepairRequest(BaseModel):
-    """Payload to initiate a bug repair session."""
+    """Payload to initiate a bug repair session across GitHub, Local, or Fixture sources."""
 
-    fixture_id: Optional[str] = Field(
+    source_type: Optional[Literal["github", "local", "fixture"]] = Field(
         default=None,
-        description="ID of a predefined benchmark fixture (e.g. task_01_arithmetic_discount)",
+        description="Source of the target repository: 'github', 'local', or 'fixture'",
     )
+    # GitHub repository parameters
+    github_repo: Optional[str] = Field(
+        default=None,
+        description="Full repository name: 'owner/repository'",
+    )
+    github_branch: Optional[str] = Field(
+        default="main",
+        description="Target branch name",
+    )
+    github_token: Optional[str] = Field(
+        default=None,
+        description="GitHub token if not configured in environment",
+    )
+
+    # Local repository parameters
     local_repo_path: Optional[str] = Field(
         default=None,
-        description="Absolute local filesystem path to target repository (Local mode with Docker only)",
+        description="Local directory path (Local mode)",
     )
+
+    # Benchmark fixture parameters
+    fixture_id: Optional[str] = Field(
+        default=None,
+        description="ID of a predefined benchmark fixture",
+    )
+
+    # Common issue description
     issue_description: Optional[str] = Field(
         default=None,
         description="Description of the bug, symptom, or expected behavior",
@@ -80,6 +132,35 @@ class JobStatusResponse(BaseModel):
     report: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
+
+class PublishPRRequest(BaseModel):
+    """Payload to explicitly approve and publish a Pull Request to GitHub."""
+
+    confirm: bool = Field(
+        ...,
+        description="Must be explicitly True to confirm PR creation",
+    )
+    pr_title: Optional[str] = Field(
+        default=None,
+        description="Custom Pull Request title",
+    )
+    pr_body: Optional[str] = Field(
+        default=None,
+        description="Custom Pull Request description",
+    )
+    target_branch: Optional[str] = Field(
+        default=None,
+        description="Base branch to target (defaults to repository default branch)",
+    )
+    github_token: Optional[str] = Field(
+        default=None,
+        description="Optional GitHub token override",
+    )
+
+
+# -----------------------------------------------------------------------------
+# Health Check Endpoint
+# -----------------------------------------------------------------------------
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
@@ -105,9 +186,160 @@ async def health_check() -> Dict[str, Any]:
         "model_health": model_health,
         "docker_available": settings.is_docker_available,
         "arbitrary_repo_repair_enabled": settings.is_docker_available and not settings.hosted_mode,
+        "github_oauth_configured": bool(settings.github_client_id and settings.github_client_secret),
         "timestamp": time.time(),
     }
 
+
+# -----------------------------------------------------------------------------
+# GitHub Integration Endpoints
+# -----------------------------------------------------------------------------
+
+@app.get("/api/github/status")
+async def get_github_status() -> Dict[str, Any]:
+    """Check GitHub OAuth and integration status."""
+    settings = get_settings()
+    return {
+        "oauth_configured": bool(settings.github_client_id and settings.github_client_secret),
+        "client_id": settings.github_client_id if settings.github_client_id else None,
+        "has_default_token": bool(settings.github_default_token and settings.github_default_token.get_secret_value()),
+    }
+
+
+@app.get("/api/github/oauth/url")
+async def get_github_oauth_url() -> Dict[str, str]:
+    """Generate GitHub OAuth authorization URL with CSRF state protection."""
+    settings = get_settings()
+    if not settings.github_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub OAuth is not configured on this server (REPOMEDIC_GITHUB_CLIENT_ID missing). Use Personal Access Token instead.",
+        )
+    state = uuid.uuid4().hex
+    oauth_states[state] = time.time()
+    url = github_client.get_oauth_authorization_url(
+        client_id=settings.github_client_id,
+        redirect_uri=settings.github_redirect_uri,
+        state=state,
+    )
+    return {"authorization_url": url, "state": state}
+
+
+@app.post("/api/github/oauth/callback")
+async def github_oauth_callback(req: GitHubOAuthCallbackRequest) -> Dict[str, Any]:
+    """Exchange OAuth authorization code for an access token."""
+    settings = get_settings()
+    if not settings.github_client_id or not settings.github_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub OAuth client credentials are not configured on this server.",
+        )
+
+    # Validate CSRF state if provided
+    if req.state and req.state in oauth_states:
+        del oauth_states[req.state]
+
+    try:
+        token = await github_client.exchange_code_for_token(
+            client_id=settings.github_client_id,
+            client_secret=settings.github_client_secret.get_secret_value(),
+            code=req.code,
+            redirect_uri=settings.github_redirect_uri,
+        )
+        user_info = await github_client.get_authenticated_user(token)
+        return {
+            "token": token,
+            "user": {
+                "login": user_info.get("login"),
+                "name": user_info.get("name"),
+                "avatar_url": user_info.get("avatar_url"),
+            },
+        }
+    except GitHubAuthenticationError as ex:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"OAuth failure: {str(ex)}")
+
+
+@app.post("/api/github/auth")
+async def authenticate_github_token(req: GitHubAuthRequest) -> Dict[str, Any]:
+    """Validate a user-supplied GitHub Personal Access Token."""
+    clean_token = req.token.strip()
+    if not clean_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token cannot be empty.")
+
+    try:
+        user_info = await github_client.get_authenticated_user(clean_token)
+        return {
+            "authenticated": True,
+            "user": {
+                "login": user_info.get("login"),
+                "name": user_info.get("name"),
+                "avatar_url": user_info.get("avatar_url"),
+                "html_url": user_info.get("html_url"),
+            },
+        }
+    except GitHubAuthenticationError as ex:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"GitHub validation error: {str(ex)}")
+
+
+def _resolve_token(explicit_token: Optional[str] = None, header_token: Optional[str] = None) -> str:
+    """Resolve GitHub token from request, header, or environment."""
+    settings = get_settings()
+    if explicit_token and explicit_token.strip():
+        return explicit_token.strip()
+    if header_token and header_token.strip():
+        clean_hdr = header_token.strip()
+        if clean_hdr.lower().startswith("bearer "):
+            clean_hdr = clean_hdr[7:].strip()
+        return clean_hdr
+    if settings.github_default_token and settings.github_default_token.get_secret_value():
+        return settings.github_default_token.get_secret_value()
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="GitHub authentication required. Please connect your GitHub account or provide a token.",
+    )
+
+
+@app.get("/api/github/repos")
+async def list_github_repositories(
+    authorization: Optional[str] = Header(None),
+) -> List[Dict[str, Any]]:
+    """List accessible GitHub repositories for the authenticated user."""
+    token = _resolve_token(header_token=authorization)
+    try:
+        repos = await github_client.list_user_repositories(token)
+        return [r.model_dump() for r in repos]
+    except GitHubAuthenticationError as ex:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(ex))
+
+
+@app.get("/api/github/repos/{owner}/{repo}/branches")
+async def list_github_branches(
+    owner: str,
+    repo: str,
+    authorization: Optional[str] = Header(None),
+) -> List[Dict[str, Any]]:
+    """List branches for a specific repository."""
+    token = _resolve_token(header_token=authorization)
+    try:
+        branches = await github_client.list_repository_branches(token, owner=owner, repo=repo)
+        return [b.model_dump() for b in branches]
+    except GitHubResourceNotFoundError as ex:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
+    except GitHubAuthenticationError as ex:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(ex))
+
+
+# -----------------------------------------------------------------------------
+# Benchmark Tasks Inspection
+# -----------------------------------------------------------------------------
 
 @app.get("/api/benchmark/tasks")
 async def list_benchmark_tasks() -> List[Dict[str, Any]]:
@@ -124,15 +356,22 @@ async def list_benchmark_tasks() -> List[Dict[str, Any]]:
     ]
 
 
-async def _execute_repair_task(job_id: str, repo_path: Path, issue_desc: str, is_fixture: bool) -> None:
-    """Asynchronous background worker function executing the repair harness."""
+# -----------------------------------------------------------------------------
+# Repair Workflow Execution
+# -----------------------------------------------------------------------------
+
+async def _execute_repair_task(
+    job_id: str,
+    repo_path: Optional[Path],
+    remote_clone_url: Optional[str],
+    branch: Optional[str],
+    auth_token: Optional[str],
+    issue_desc: str,
+    is_fixture: bool,
+) -> None:
+    """Asynchronous background worker executing the Evidence-Gated Repair Harness."""
     settings = get_settings()
     model_client = create_model_client(settings)
-    if settings.model_provider == "mock" and is_fixture:
-        matched_spec = next((t for t in BENCHMARK_TASKS if t.fixture_dir_name == repo_path.name), None)
-        if matched_spec and matched_spec.golden_patch:
-            from repomedic.models.mock_client import MockModelClient
-            model_client = MockModelClient(responses=[matched_spec.golden_patch])
     sandbox_runner = create_sandbox_runner(timeout_seconds=settings.test_timeout_seconds)
 
     def on_state_update(state: RepairState, message: str) -> None:
@@ -150,6 +389,9 @@ async def _execute_repair_task(job_id: str, repo_path: Path, issue_desc: str, is
     try:
         report: RepairSessionReport = await orchestrator.run_repair(
             repo_path=repo_path,
+            remote_clone_url=remote_clone_url,
+            branch=branch,
+            auth_token=auth_token,
             issue_description=issue_desc,
             is_predefined_fixture=is_fixture,
         )
@@ -159,51 +401,87 @@ async def _execute_repair_task(job_id: str, repo_path: Path, issue_desc: str, is
         repair_jobs[job_id]["attempts_used"] = report.attempts_count
         repair_jobs[job_id]["report"] = report.model_dump()
         repair_jobs[job_id]["progress_message"] = report.summary_message
+        # Store auth token privately in job metadata for user-approved PR creation
+        repair_jobs[job_id]["_auth_token"] = auth_token
+        repair_jobs[job_id]["_remote_clone_url"] = remote_clone_url
+        repair_jobs[job_id]["_base_branch"] = branch
     except Exception as ex:
+        clean_err = redact_token(str(ex))
         logger.exception("Error executing repair job %s", job_id)
         repair_jobs[job_id]["status"] = "failed"
         repair_jobs[job_id]["completed_at"] = time.time()
-        repair_jobs[job_id]["error"] = str(ex)
+        repair_jobs[job_id]["error"] = clean_err
         repair_jobs[job_id]["current_state"] = RepairState.INFRASTRUCTURE_ERROR.value
-        repair_jobs[job_id]["progress_message"] = f"Internal execution failure: {str(ex)}"
+        repair_jobs[job_id]["progress_message"] = f"Internal execution failure: {clean_err}"
 
 
 @app.post("/api/repair/start", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
-async def start_repair(req: RepairRequest, background_tasks: BackgroundTasks) -> JobStatusResponse:
-    """Start an asynchronous repair session on a predefined fixture or local repository."""
+async def start_repair(
+    req: RepairRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None),
+) -> JobStatusResponse:
+    """Start an asynchronous repair session on a GitHub repo, local repo, or fixture."""
     settings = get_settings()
     fixtures_dir = Path(__file__).resolve().parent.parent / "benchmarks" / "fixtures"
 
-    target_path: Path
-    issue_desc: str
+    target_local_path: Optional[Path] = None
+    remote_clone_url: Optional[str] = None
+    target_branch: Optional[str] = "main"
+    auth_token: Optional[str] = None
+    issue_desc: str = ""
     is_fixture: bool = False
 
-    if req.fixture_id:
-        matched = next((t for t in BENCHMARK_TASKS if t.task_id == req.fixture_id), None)
-        if not matched:
+    # 1. GitHub Repository Mode
+    if req.source_type == "github":
+        if not req.github_repo:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Benchmark fixture '{req.fixture_id}' not found.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Must provide 'github_repo' (format 'owner/repository') for GitHub mode.",
             )
-        target_path = fixtures_dir / matched.fixture_dir_name
-        issue_desc = req.issue_description or matched.issue_description
-        is_fixture = True
-    elif req.local_repo_path:
+        try:
+            owner, repo = validate_repository_name(req.github_repo)
+            target_branch = validate_github_identifier(req.github_branch or "main")
+        except GitHubValidationError as ex:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
+
+        auth_token = _resolve_token(explicit_token=req.github_token, header_token=authorization)
+        remote_clone_url = f"https://github.com/{owner}/{repo}"
+
+        if not req.issue_description or not req.issue_description.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An issue description is required for repository bug repair.",
+            )
+        issue_desc = req.issue_description.strip()
+
+        # Sandbox check: arbitrary untrusted repo execution requires Docker
+        if not settings.is_docker_available and not settings.environment == "test":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Docker is required for arbitrary repository test execution, but is unavailable on this host. Execution of untrusted code is blocked to prevent host compromise.",
+            )
+
+    # 2. Local Repository Mode
+    elif req.source_type == "local" or (req.local_repo_path and not req.fixture_id):
         if settings.hosted_mode:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Arbitrary repository repair is disabled in hosted demo mode. Please select a predefined benchmark fixture.",
+                detail="Arbitrary local repository repair is disabled in hosted mode. Please select a predefined benchmark fixture or GitHub repository.",
             )
-        if not settings.is_docker_available:
+        if not req.local_repo_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must provide 'local_repo_path'.")
+
+        target_local_path = Path(req.local_repo_path).resolve()
+        if not target_local_path.exists() or not target_local_path.is_dir():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Docker is required for arbitrary repository test execution, but is unavailable on this host. Arbitrary code execution is disabled to protect the host system.",
+                detail=f"Local repository path does not exist: {req.local_repo_path}",
             )
-        target_path = Path(req.local_repo_path).resolve()
-        if not target_path.exists() or not target_path.is_dir():
+        if not settings.is_docker_available and not settings.environment == "test":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Local repository directory does not exist: {req.local_repo_path}",
+                detail="Docker is required for arbitrary repository test execution. Sandboxing is unavailable; arbitrary code execution is disabled to protect the host.",
             )
         if not req.issue_description or not req.issue_description.strip():
             raise HTTPException(
@@ -211,17 +489,31 @@ async def start_repair(req: RepairRequest, background_tasks: BackgroundTasks) ->
                 detail="An issue description is required when targeting an arbitrary local repository.",
             )
         issue_desc = req.issue_description.strip()
+
+    # 3. Predefined Benchmark Fixture Mode
+    elif req.source_type == "fixture" or req.fixture_id:
+        fixture_key = req.fixture_id or "task_01_arithmetic_discount"
+        matched = next((t for t in BENCHMARK_TASKS if t.task_id == fixture_key), None)
+        if not matched:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Benchmark fixture '{fixture_key}' not found.",
+            )
+        target_local_path = fixtures_dir / matched.fixture_dir_name
+        issue_desc = req.issue_description or matched.issue_description
+        is_fixture = True
+
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Must provide either 'fixture_id' or 'local_repo_path'.",
+            detail="Must specify a valid source_type ('github', 'local', or 'fixture').",
         )
 
     job_id = uuid.uuid4().hex[:12]
     job_info = {
         "job_id": job_id,
         "status": "running",
-        "current_state": RepairState.INITIALIZING.value,
+        "current_state": RepairState.CREATED.value,
         "progress_message": "Initializing repair harness",
         "attempts_used": 0,
         "max_attempts": settings.max_repair_attempts,
@@ -233,7 +525,16 @@ async def start_repair(req: RepairRequest, background_tasks: BackgroundTasks) ->
     repair_jobs[job_id] = job_info
 
     # Launch task asynchronously
-    background_tasks.add_task(_execute_repair_task, job_id, target_path, issue_desc, is_fixture)
+    background_tasks.add_task(
+        _execute_repair_task,
+        job_id,
+        target_local_path,
+        remote_clone_url,
+        target_branch,
+        auth_token,
+        issue_desc,
+        is_fixture,
+    )
 
     return JobStatusResponse(**job_info)
 
@@ -243,8 +544,172 @@ async def get_repair_status(job_id: str) -> JobStatusResponse:
     """Retrieve current progress and results of a repair job."""
     if job_id not in repair_jobs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' not found.")
-    return JobStatusResponse(**repair_jobs[job_id])
+    data = dict(repair_jobs[job_id])
+    # Sanitize internal credentials from response
+    data.pop("_auth_token", None)
+    return JobStatusResponse(**data)
 
+
+# -----------------------------------------------------------------------------
+# Downloads & Artifacts
+# -----------------------------------------------------------------------------
+
+@app.get("/api/repair/{job_id}/download/patch")
+async def download_patch(job_id: str):
+    """Download the verified unified diff patch file."""
+    if job_id not in repair_jobs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+    report = repair_jobs[job_id].get("report")
+    if not report or not report.get("verified_patch"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No verified patch was produced for this job.",
+        )
+
+    patch_content = report["verified_patch"]
+    filename = f"repomedic_fix_{job_id}.patch"
+    return Response(
+        content=patch_content,
+        media_type="text/x-diff",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/repair/{job_id}/download/report")
+async def download_report(job_id: str):
+    """Download the machine-readable JSON session audit report."""
+    if job_id not in repair_jobs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+    report = repair_jobs[job_id].get("report")
+    if not report:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No report generated yet.")
+
+    filename = f"repomedic_report_{job_id}.json"
+    return JSONResponse(
+        content=report,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# -----------------------------------------------------------------------------
+# Explicitly Approved Pull Request Creation
+# -----------------------------------------------------------------------------
+
+@app.post("/api/repair/{job_id}/publish-pr")
+async def publish_pull_request(
+    job_id: str,
+    req: PublishPRRequest,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Publish the verified patch as a GitHub Pull Request with mandatory explicit user confirmation."""
+    if job_id not in repair_jobs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+    job = repair_jobs[job_id]
+    report = job.get("report")
+    if not report:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Repair job has not completed.")
+
+    # Guard: Must be explicitly confirmed by user
+    if not req.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User confirmation is required. Explicitly set 'confirm: true' to approve publishing changes.",
+        )
+
+    # Guard: Must be verified
+    if report.get("terminal_state") not in (RepairState.VERIFIED.value, "COMPLETED_VERIFIED"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot publish unverified repair. Current state is '{report.get('terminal_state')}'.",
+        )
+
+    verified_patch = report.get("verified_patch")
+    if not verified_patch:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verified patch found.")
+
+    remote_clone_url = job.get("_remote_clone_url") or report.get("remote_clone_url")
+    if not remote_clone_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This repair job was executed on a local repository or fixture, not a remote GitHub repository.",
+        )
+
+    token = _resolve_token(explicit_token=req.github_token, header_token=authorization)
+    # Parse owner and repo
+    m = re.match(r"^https://github\.com/([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+)", remote_clone_url)
+    if not m:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid GitHub repository URL.")
+    owner, repo = m.group(1), m.group(2)
+
+    base_branch = req.target_branch or job.get("_base_branch") or report.get("base_branch") or "main"
+    disposable_branch = report.get("disposable_branch") or f"repomedic/fix-{job_id}"
+
+    # Push disposable branch using DisposableWorkspace
+    try:
+        with DisposableWorkspace(
+            remote_clone_url=remote_clone_url,
+            base_branch=base_branch,
+            auth_token=token,
+        ) as ws:
+            ws.disposable_branch = disposable_branch
+            ws.apply_patch(verified_patch)
+            commit_msg = f"fix(repomedic): resolve {report.get('issue_description', '')[:70]}"
+            committed = ws.commit_patch(commit_msg)
+            if not committed:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to commit patch to branch.")
+
+            pushed_branch = ws.push_disposable_branch()
+
+        # Construct PR title & body
+        pr_title = req.pr_title or f"RepoMedic AI Fix: {report.get('issue_description', '')[:60]}"
+        pr_body = req.pr_body or (
+            "## 🩺 RepoMedic AI Autonomous Bug Repair\n\n"
+            f"**Issue Description**:\n> {report.get('issue_description')}\n\n"
+            "### 🛡️ Evidence-Gated Verification Details\n"
+            f"- **Outcome**: All verification tests PASSED cleanly inside an isolated sandbox.\n"
+            f"- **Attempts Used**: {report.get('attempts_count')} / {report.get('max_attempts')}\n"
+            f"- **Changed Files**: `{', '.join(report.get('changed_files', []))}`\n\n"
+            "```diff\n"
+            f"{verified_patch[:2000]}\n"
+            "```\n\n"
+            "---\n*Generated and verified by [RepoMedic AI](https://github.com/MDADILIFTEKHAR/RepoMedic-AI).*"
+        )
+
+        pr_info = await github_client.create_pull_request(
+            token=token,
+            owner=owner,
+            repo=repo,
+            title=pr_title,
+            body=pr_body,
+            head=pushed_branch,
+            base=base_branch,
+        )
+
+        # Store PR URL in report
+        repair_jobs[job_id]["report"]["pull_request_url"] = pr_info.get("pr_url")
+        return {
+            "success": True,
+            "pr_number": pr_info.get("pr_number"),
+            "pr_url": pr_info.get("pr_url"),
+            "head_branch": pushed_branch,
+            "base_branch": base_branch,
+            "message": f"Successfully created Pull Request #{pr_info.get('pr_number')} on GitHub.",
+        }
+
+    except (GitHubValidationError, GitHubPermissionError, GitHubAuthenticationError) as ex:
+        clean_msg = redact_token(str(ex))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=clean_msg)
+    except Exception as ex:
+        clean_msg = redact_token(str(ex))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to publish PR: {clean_msg}")
+
+
+# -----------------------------------------------------------------------------
+# Benchmark Runner Endpoint
+# -----------------------------------------------------------------------------
 
 @app.post("/api/benchmark/run")
 async def run_benchmark_endpoint(mode: str = "bounded_repair_loop") -> Dict[str, Any]:
@@ -264,7 +729,10 @@ async def run_benchmark_endpoint(mode: str = "bounded_repair_loop") -> Dict[str,
     return report.model_dump()
 
 
-# Serve frontend static assets
+# -----------------------------------------------------------------------------
+# Static Files & Frontend
+# -----------------------------------------------------------------------------
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     model_max_retries: int = 2
     model_temperature: float = 0.1
 
+    # GitHub Integration Settings
+    github_client_id: Optional[str] = None
+    github_client_secret: Optional[SecretStr] = None
+    github_redirect_uri: Optional[str] = None
+    github_default_token: Optional[SecretStr] = None
+
     # Orchestrator & Repair Loop Controls
     max_repair_attempts: int = 3
     test_timeout_seconds: float = 30.0
@@ -93,8 +99,10 @@ class Settings(BaseSettings):
 
     def safe_dict(self) -> dict:
         """Produce a serialized config dict with masked secrets for telemetry and logs."""
-        d = self.model_dump(exclude={"openai_api_key"})
+        d = self.model_dump(exclude={"openai_api_key", "github_client_secret", "github_default_token"})
         d["openai_api_key_configured"] = bool(self.openai_api_key and self.openai_api_key.get_secret_value())
+        d["github_oauth_configured"] = bool(self.github_client_id and self.github_client_secret)
+        d["github_token_configured"] = bool(self.github_default_token and self.github_default_token.get_secret_value())
         return d
 
 

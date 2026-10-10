@@ -1,48 +1,117 @@
-// RepoMedic AI Frontend Logic
+// RepoMedic AI Real-World Frontend Logic
 
 document.addEventListener("DOMContentLoaded", () => {
-  // Elements
+  // Global State
+  let currentActiveJobId = null;
+  let pollingInterval = null;
+  let currentSourceType = "github"; // "github" | "local" | "fixture"
+  let benchmarkTasksData = [];
+  let userGitHubToken = localStorage.getItem("repomedic_gh_token") || null;
+  let lastReportData = null;
+
+  // Header Status Elements
+  const pillGitHub = document.getElementById("pill-github");
+  const lblGitHubUser = document.getElementById("lbl-github-user");
+  const btnOpenGitHubModal = document.getElementById("btn-open-github-modal");
+
   const pillModel = document.getElementById("pill-model");
-  const pillSandbox = document.getElementById("pill-sandbox");
   const lblModelName = document.getElementById("lbl-model-name");
+  const pillSandbox = document.getElementById("pill-sandbox");
   const lblSandboxMode = document.getElementById("lbl-sandbox-mode");
   const lblEnvMode = document.getElementById("lbl-env-mode");
 
+  // Source Selector Elements
+  const sourceTabBtns = document.querySelectorAll(".source-tab-btn");
+  const sourcePanes = {
+    github: document.getElementById("pane-source-github"),
+    local: document.getElementById("pane-source-local"),
+    fixture: document.getElementById("pane-source-fixture"),
+  };
+
+  const githubRepoSelect = document.getElementById("github-repo-select");
+  const githubRepoManual = document.getElementById("github-repo-manual");
+  const btnRefreshRepos = document.getElementById("btn-refresh-repos");
+  const githubBranchSelect = document.getElementById("github-branch-select");
+  const localRepoPath = document.getElementById("local-repo-path");
   const taskSelect = document.getElementById("task-select");
   const issueDesc = document.getElementById("issue-desc");
+
+  // Primary Buttons & Badges
   const btnStartRepair = document.getElementById("btn-start-repair");
   const btnRunBenchmark = document.getElementById("btn-run-benchmark");
-
   const badgeAttempt = document.getElementById("badge-attempt");
   const badgeStatus = document.getElementById("badge-status");
-  const progressBox = document.getElementById("progress-box");
   const progressText = document.getElementById("progress-text");
   const mainSpinner = document.getElementById("main-spinner");
 
+  // Diff & Action Elements
   const diffViewer = document.getElementById("diff-viewer");
   const diffMeta = document.getElementById("diff-meta");
   const btnCopyDiff = document.getElementById("btn-copy-diff");
+  const btnDownloadPatch = document.getElementById("btn-download-patch");
+  const btnDownloadReport = document.getElementById("btn-download-report");
+  const btnOpenPRModal = document.getElementById("btn-open-pr-modal");
 
   const preBaseline = document.getElementById("pre-baseline");
   const preVerification = document.getElementById("pre-verification");
   const auditList = document.getElementById("audit-history-list");
 
-  // Stepper Elements
+  // Workflow Stepper Elements
   const stepNodes = {
-    INITIALIZING: document.getElementById("step-inspect"),
-    COLLECTING_CONTEXT: document.getElementById("step-inspect"),
-    RUNNING_BASELINE_TESTS: document.getElementById("step-baseline"),
-    GENERATING_PATCH: document.getElementById("step-generate"),
-    VALIDATING_PATCH_GATE: document.getElementById("step-gate"),
-    APPLYING_PATCH: document.getElementById("step-verify"),
-    RUNNING_VERIFICATION_TESTS: document.getElementById("step-verify"),
-    COMPLETED_VERIFIED: document.getElementById("step-outcome"),
+    CREATED: document.getElementById("step-created"),
+    REPOSITORY_VALIDATED: document.getElementById("step-repo-validated"),
+    BASELINE_TESTED: document.getElementById("step-baseline-tested"),
+    ANALYZED: document.getElementById("step-analyzed"),
+    PATCH_PROPOSED: document.getElementById("step-patch-proposed"),
+    PATCH_VALIDATED: document.getElementById("step-patch-validated"),
+    PATCH_APPLIED: document.getElementById("step-patch-applied"),
+    TESTED: document.getElementById("step-tested"),
+    VERIFIED: document.getElementById("step-verified"),
   };
 
-  // Tabs
+  // Modals
+  const modalGitHub = document.getElementById("modal-github");
+  const btnCloseGitHubModal = document.getElementById("btn-close-github-modal");
+  const btnSavePAT = document.getElementById("btn-save-pat");
+  const patInput = document.getElementById("pat-input");
+  const oauthSection = document.getElementById("oauth-section");
+  const btnStartOAuth = document.getElementById("btn-start-oauth");
+
+  const modalPR = document.getElementById("modal-pr");
+  const btnClosePRModal = document.getElementById("btn-close-pr-modal");
+  const prRepoPill = document.getElementById("pr-repo-pill");
+  const prTitleInput = document.getElementById("pr-title-input");
+  const prBodyInput = document.getElementById("pr-body-input");
+  const chkPRConfirm = document.getElementById("chk-pr-confirm");
+  const btnSubmitPR = document.getElementById("btn-submit-pr");
+  const prStatusMsg = document.getElementById("pr-status-msg");
+
+  const modalBenchmark = document.getElementById("modal-benchmark");
+  const btnCloseModal = document.getElementById("btn-close-modal");
+  const benchmarkRunning = document.getElementById("benchmark-running-state");
+  const benchmarkResults = document.getElementById("benchmark-results-container");
+  const metricsCards = document.getElementById("metrics-cards");
+  const tableBenchmarkBody = document.querySelector("#table-benchmark-tasks tbody");
+
+  // ---------------------------------------------------------------------------
+  // 1. Navigation & Tabs
+  // ---------------------------------------------------------------------------
+
+  sourceTabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      sourceTabBtns.forEach((b) => b.classList.remove("active"));
+      Object.values(sourcePanes).forEach((p) => p.classList.remove("active"));
+
+      btn.classList.add("active");
+      currentSourceType = btn.dataset.source;
+      if (sourcePanes[currentSourceType]) {
+        sourcePanes[currentSourceType].classList.add("active");
+      }
+    });
+  });
+
   const tabBtns = document.querySelectorAll(".tab-btn");
   const tabPanes = document.querySelectorAll(".tab-pane");
-
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       tabBtns.forEach((b) => b.classList.remove("active"));
@@ -53,31 +122,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Benchmark Modal Elements
-  const modalBenchmark = document.getElementById("modal-benchmark");
-  const btnCloseModal = document.getElementById("btn-close-modal");
-  const benchmarkRunning = document.getElementById("benchmark-running-state");
-  const benchmarkResults = document.getElementById("benchmark-results-container");
-  const metricsCards = document.getElementById("metrics-cards");
-  const tableBenchmarkBody = document.querySelector("#table-benchmark-tasks tbody");
+  // ---------------------------------------------------------------------------
+  // 2. Health & Status Checks
+  // ---------------------------------------------------------------------------
 
-  let benchmarkTasksData = [];
-  let currentActiveJobId = null;
-  let pollingInterval = null;
-
-  // 1. Fetch Health Status
-  async function fetchHealth() {
+  async function checkHealth() {
     try {
       const res = await fetch("/health");
       if (!res.ok) throw new Error("Health check failed");
       const data = await res.json();
 
-      lblModelName.textContent = data.model_name || "Unknown";
+      lblModelName.textContent = data.model_name || "Configured";
       if (data.model_health && data.model_health.available) {
         pillModel.className = "status-pill online";
       } else {
         pillModel.className = "status-pill warn";
-        lblModelName.textContent += " (Offline/Mock)";
+        lblModelName.textContent += " (Offline / Mock)";
       }
 
       if (data.docker_available) {
@@ -88,7 +148,11 @@ document.addEventListener("DOMContentLoaded", () => {
         lblSandboxMode.textContent = "Restricted Fixture";
       }
 
-      lblEnvMode.textContent = data.hosted_mode ? "Hosted (Fixtures Only)" : "Local Development";
+      lblEnvMode.textContent = data.hosted_mode ? "Hosted Mode" : "Local Development";
+
+      if (data.github_oauth_configured) {
+        oauthSection.classList.remove("hidden");
+      }
     } catch (err) {
       pillModel.className = "status-pill error";
       lblModelName.textContent = "Unreachable";
@@ -97,8 +161,155 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 2. Fetch Benchmark Tasks for selector
-  async function fetchTasks() {
+  // ---------------------------------------------------------------------------
+  // 3. GitHub Authentication & Repositories
+  // ---------------------------------------------------------------------------
+
+  function getAuthHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    if (userGitHubToken) {
+      headers["Authorization"] = `Bearer ${userGitHubToken}`;
+    }
+    return headers;
+  }
+
+  async function verifyGitHubToken() {
+    if (!userGitHubToken) {
+      lblGitHubUser.textContent = "Not Connected";
+      pillGitHub.className = "status-pill";
+      btnOpenGitHubModal.textContent = "Connect";
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/github/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: userGitHubToken }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Token invalid");
+      }
+
+      const data = await res.json();
+      lblGitHubUser.textContent = `@${data.user.login}`;
+      pillGitHub.className = "status-pill online";
+      btnOpenGitHubModal.textContent = "Disconnect";
+      loadGitHubRepositories();
+    } catch (err) {
+      userGitHubToken = null;
+      localStorage.removeItem("repomedic_gh_token");
+      lblGitHubUser.textContent = "Invalid Token";
+      pillGitHub.className = "status-pill error";
+      btnOpenGitHubModal.textContent = "Connect";
+    }
+  }
+
+  async function loadGitHubRepositories() {
+    if (!userGitHubToken) return;
+
+    try {
+      const res = await fetch("/api/github/repos", { headers: getAuthHeaders() });
+      if (!res.ok) return;
+      const repos = await res.json();
+
+      githubRepoSelect.innerHTML = '<option value="">-- Select Your Repository --</option>';
+      repos.forEach((r) => {
+        const opt = document.createElement("option");
+        opt.value = r.full_name;
+        opt.textContent = `${r.full_name} (${r.default_branch})${r.private ? " 🔒" : ""}`;
+        githubRepoSelect.appendChild(opt);
+      });
+    } catch (err) {
+      console.error("Failed to list repos:", err);
+    }
+  }
+
+  async function loadBranchesForRepo(fullName) {
+    if (!userGitHubToken || !fullName) return;
+    const [owner, repo] = fullName.split("/");
+    if (!owner || !repo) return;
+
+    try {
+      const res = await fetch(`/api/github/repos/${owner}/${repo}/branches`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return;
+      const branches = await res.json();
+
+      githubBranchSelect.innerHTML = "";
+      branches.forEach((b) => {
+        const opt = document.createElement("option");
+        opt.value = b.name;
+        opt.textContent = b.name + (b.protected ? " (protected)" : "");
+        githubBranchSelect.appendChild(opt);
+      });
+    } catch (err) {
+      console.error("Failed to load branches:", err);
+    }
+  }
+
+  githubRepoSelect.addEventListener("change", () => {
+    if (githubRepoSelect.value) {
+      githubRepoManual.value = githubRepoSelect.value;
+      loadBranchesForRepo(githubRepoSelect.value);
+    }
+  });
+
+  githubRepoManual.addEventListener("blur", () => {
+    if (githubRepoManual.value.includes("/")) {
+      loadBranchesForRepo(githubRepoManual.value.trim());
+    }
+  });
+
+  btnRefreshRepos.addEventListener("click", () => {
+    loadGitHubRepositories();
+  });
+
+  // Modal Handlers
+  btnOpenGitHubModal.addEventListener("click", () => {
+    if (userGitHubToken) {
+      // Disconnect
+      userGitHubToken = null;
+      localStorage.removeItem("repomedic_gh_token");
+      verifyGitHubToken();
+    } else {
+      modalGitHub.classList.remove("hidden");
+    }
+  });
+
+  btnCloseGitHubModal.addEventListener("click", () => {
+    modalGitHub.classList.add("hidden");
+  });
+
+  btnSavePAT.addEventListener("click", async () => {
+    const token = patInput.value.trim();
+    if (!token) return;
+
+    userGitHubToken = token;
+    localStorage.setItem("repomedic_gh_token", token);
+    patInput.value = "";
+    modalGitHub.classList.add("hidden");
+    await verifyGitHubToken();
+  });
+
+  btnStartOAuth.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/github/oauth/url");
+      if (!res.ok) throw new Error("Could not initiate OAuth");
+      const data = await res.json();
+      window.location.href = data.authorization_url;
+    } catch (err) {
+      alert("GitHub OAuth error: " + err.message);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. Predefined Benchmark Tasks
+  // ---------------------------------------------------------------------------
+
+  async function loadBenchmarkTasks() {
     try {
       const res = await fetch("/api/benchmark/tasks");
       if (!res.ok) return;
@@ -112,7 +323,7 @@ document.addEventListener("DOMContentLoaded", () => {
         taskSelect.appendChild(opt);
       });
     } catch (err) {
-      console.error("Failed to load tasks:", err);
+      console.error("Failed to load benchmark tasks:", err);
     }
   }
 
@@ -123,28 +334,54 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 3. Start Repair Workflow
-  btnStartRepair.addEventListener("click", async () => {
-    const fixtureId = taskSelect.value;
-    const description = issueDesc.value.trim();
+  // ---------------------------------------------------------------------------
+  // 5. Run Evidence-Gated Repair
+  // ---------------------------------------------------------------------------
 
-    if (!fixtureId && !description) {
-      alert("Please select a benchmark task or enter a bug description.");
+  btnStartRepair.addEventListener("click", async () => {
+    const desc = issueDesc.value.trim();
+    if (!desc) {
+      alert("Please provide a bug description.");
       return;
     }
 
+    const payload = {
+      source_type: currentSourceType,
+      issue_description: desc,
+      github_token: userGitHubToken || null,
+    };
+
+    if (currentSourceType === "github") {
+      const repo = githubRepoManual.value.trim() || githubRepoSelect.value;
+      if (!repo || !repo.includes("/")) {
+        alert("Please select or enter a valid GitHub repository (owner/repo).");
+        return;
+      }
+      payload.github_repo = repo;
+      payload.github_branch = githubBranchSelect.value || "main";
+    } else if (currentSourceType === "local") {
+      const path = localRepoPath.value.trim();
+      if (!path) {
+        alert("Please enter a local repository path.");
+        return;
+      }
+      payload.local_repo_path = path;
+    } else if (currentSourceType === "fixture") {
+      const fixtureId = taskSelect.value;
+      if (!fixtureId) {
+        alert("Please select a benchmark fixture.");
+        return;
+      }
+      payload.fixture_id = fixtureId;
+    }
+
     resetWorkflowUI();
-    setLoadingState(true, "Submitting repair request to harness...");
+    setLoadingState(true, "Submitting repair task to harness...");
 
     try {
-      const payload = {
-        fixture_id: fixtureId || null,
-        issue_description: description,
-      };
-
       const res = await fetch("/api/repair/start", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify(payload),
       });
 
@@ -179,6 +416,7 @@ document.addEventListener("DOMContentLoaded", () => {
           pollingInterval = null;
           setLoadingState(false, data.progress_message);
           if (data.report) {
+            lastReportData = data.report;
             renderFinalReport(data.report);
           }
         }
@@ -195,15 +433,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     updateStepper(data.current_state);
 
-    if (data.current_state === "COMPLETED_VERIFIED") {
+    if (data.current_state === "VERIFIED" || data.current_state === "COMPLETED_VERIFIED") {
       badgeStatus.className = "badge badge-verified";
       badgeStatus.textContent = "Verified";
     } else if (data.current_state === "PATCH_REJECTED") {
       badgeStatus.className = "badge badge-rejected";
-      badgeStatus.textContent = "Gate Rejected";
-    } else if (data.current_state === "FAILED_MAX_ATTEMPTS") {
+      badgeStatus.textContent = "Policy Rejected";
+    } else if (data.current_state === "FAILED" || data.current_state === "FAILED_MAX_ATTEMPTS") {
       badgeStatus.className = "badge badge-failed";
-      badgeStatus.textContent = "Max Retries Failed";
+      badgeStatus.textContent = "Failed (Max Retries)";
     } else if (data.current_state === "INFRASTRUCTURE_ERROR" || data.current_state === "SANDBOX_BLOCKED") {
       badgeStatus.className = "badge badge-infra";
       badgeStatus.textContent = "Infra Blocked";
@@ -226,37 +464,49 @@ document.addEventListener("DOMContentLoaded", () => {
       activeNode.classList.add("active");
     }
 
-    // Mark prior steps done
-    const stepsInOrder = [
-      stepNodes.INITIALIZING,
-      stepNodes.RUNNING_BASELINE_TESTS,
-      stepNodes.GENERATING_PATCH,
-      stepNodes.VALIDATING_PATCH_GATE,
-      stepNodes.RUNNING_VERIFICATION_TESTS,
-      stepNodes.COMPLETED_VERIFIED,
+    const stepsOrder = [
+      stepNodes.CREATED,
+      stepNodes.REPOSITORY_VALIDATED,
+      stepNodes.BASELINE_TESTED,
+      stepNodes.ANALYZED,
+      stepNodes.PATCH_PROPOSED,
+      stepNodes.PATCH_VALIDATED,
+      stepNodes.PATCH_APPLIED,
+      stepNodes.TESTED,
+      stepNodes.VERIFIED,
     ];
 
-    const idx = stepsInOrder.indexOf(activeNode);
+    const idx = stepsOrder.indexOf(activeNode);
     if (idx > 0) {
       for (let i = 0; i < idx; i++) {
-        if (stepsInOrder[i]) stepsInOrder[i].classList.add("done");
+        if (stepsOrder[i]) stepsOrder[i].classList.add("done");
       }
     }
   }
 
   function renderFinalReport(report) {
-    // 1. Render Diff
+    // 1. Diff Rendering
     if (report.verified_patch) {
       diffMeta.textContent = `Verified unified diff applied to ${report.changed_files.join(", ")}`;
       diffViewer.innerHTML = formatDiffSyntax(report.verified_patch);
       btnCopyDiff.disabled = false;
+      btnDownloadPatch.disabled = false;
+
+      // Enable PR creation if this was a remote GitHub repo
+      if (report.remote_clone_url || currentSourceType === "github") {
+        btnOpenPRModal.disabled = false;
+      }
     } else {
       diffMeta.textContent = "No verified patch generated.";
       diffViewer.innerHTML = "<code>/* No verified unified diff available */</code>";
       btnCopyDiff.disabled = true;
+      btnDownloadPatch.disabled = true;
+      btnOpenPRModal.disabled = true;
     }
 
-    // 2. Render Baseline & Verification Output
+    btnDownloadReport.disabled = false;
+
+    // 2. Test Evidence Rendering
     preBaseline.textContent =
       report.baseline_stdout || report.baseline_stderr || "No baseline test output captured.";
 
@@ -268,7 +518,7 @@ document.addEventListener("DOMContentLoaded", () => {
       preVerification.textContent = "No verification executed.";
     }
 
-    // 3. Render Audit History
+    // 3. Audit History
     auditList.innerHTML = "";
     if (report.audit_history && report.audit_history.length > 0) {
       report.audit_history.forEach((a) => {
@@ -292,69 +542,110 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function formatDiffSyntax(rawDiff) {
-    const lines = rawDiff.split("\n");
-    return lines
-      .map((line) => {
-        const escaped = escapeHtml(line);
-        if (line.startsWith("---") || line.startsWith("+++")) {
-          return `<span class="diff-header">${escaped}</span>`;
-        } else if (line.startsWith("@@")) {
-          return `<span class="diff-hunk">${escaped}</span>`;
-        } else if (line.startsWith("+")) {
-          return `<span class="diff-add">${escaped}</span>`;
-        } else if (line.startsWith("-")) {
-          return `<span class="diff-del">${escaped}</span>`;
-        }
-        return escaped;
-      })
-      .join("\n");
-  }
-
-  function escapeHtml(str) {
-    return str
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
+  // ---------------------------------------------------------------------------
+  // 6. Downloads & Actions
+  // ---------------------------------------------------------------------------
 
   btnCopyDiff.addEventListener("click", () => {
     const raw = diffViewer.textContent;
     if (raw) {
       navigator.clipboard.writeText(raw).then(() => {
         btnCopyDiff.textContent = "Copied!";
-        setTimeout(() => (btnCopyDiff.textContent = "Copy Diff"), 2000);
+        setTimeout(() => (btnCopyDiff.textContent = "📋 Copy Diff"), 2000);
       });
     }
   });
 
-  function resetWorkflowUI() {
-    badgeAttempt.textContent = "Attempt: 0 / 3";
-    badgeStatus.className = "badge badge-idle";
-    badgeStatus.textContent = "Running";
-    diffViewer.innerHTML = "<code>/* Running repair workflow... */</code>";
-    diffMeta.textContent = "Generating patch...";
-    btnCopyDiff.disabled = true;
-    preBaseline.textContent = "Running...";
-    preVerification.textContent = "Pending...";
-    auditList.innerHTML = '<p class="empty-state">Repair running...</p>';
-    Object.values(stepNodes).forEach((n) => n && n.classList.remove("active", "done"));
-  }
-
-  function setLoadingState(isLoading, msg) {
-    btnStartRepair.disabled = isLoading;
-    btnRunBenchmark.disabled = isLoading;
-    if (isLoading) {
-      mainSpinner.classList.add("active");
-    } else {
-      mainSpinner.classList.remove("active");
+  btnDownloadPatch.addEventListener("click", () => {
+    if (currentActiveJobId) {
+      window.location.href = `/api/repair/${currentActiveJobId}/download/patch`;
     }
-    progressText.textContent = msg;
-  }
+  });
 
-  // 4. Benchmark Modal
+  btnDownloadReport.addEventListener("click", () => {
+    if (currentActiveJobId) {
+      window.location.href = `/api/repair/${currentActiveJobId}/download/report`;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. Explicit Pull Request Approval & Creation
+  // ---------------------------------------------------------------------------
+
+  btnOpenPRModal.addEventListener("click", () => {
+    if (!lastReportData || !lastReportData.verified_patch) return;
+
+    const repoName = lastReportData.repository_path || githubRepoManual.value || "repository";
+    const branchName = lastReportData.base_branch || githubBranchSelect.value || "main";
+    prRepoPill.textContent = `${repoName} (base: ${branchName})`;
+
+    prTitleInput.value = `RepoMedic AI Fix: ${lastReportData.issue_description.substring(0, 60)}`;
+    prBodyInput.value =
+      `## 🩺 Autonomous Bug Repair by RepoMedic AI\n\n` +
+      `**Issue Description**:\n> ${lastReportData.issue_description}\n\n` +
+      `### 🛡️ Evidence-Gated Verification Details\n` +
+      `- **Test Outcome**: All verification tests passed cleanly in isolated sandbox.\n` +
+      `- **Attempts Used**: ${lastReportData.attempts_count} / ${lastReportData.max_attempts}\n` +
+      `- **Files Changed**: \`${lastReportData.changed_files.join(", ")}\`\n`;
+
+    chkPRConfirm.checked = false;
+    btnSubmitPR.disabled = true;
+    prStatusMsg.className = "pr-status-msg";
+    prStatusMsg.textContent = "";
+
+    modalPR.classList.remove("hidden");
+  });
+
+  btnClosePRModal.addEventListener("click", () => {
+    modalPR.classList.add("hidden");
+  });
+
+  chkPRConfirm.addEventListener("change", () => {
+    btnSubmitPR.disabled = !chkPRConfirm.checked;
+  });
+
+  btnSubmitPR.addEventListener("click", async () => {
+    if (!currentActiveJobId || !chkPRConfirm.checked) return;
+
+    btnSubmitPR.disabled = true;
+    prStatusMsg.className = "pr-status-msg active";
+    prStatusMsg.textContent = "Pushing disposable branch and opening Pull Request on GitHub...";
+
+    try {
+      const payload = {
+        confirm: true,
+        pr_title: prTitleInput.value.trim(),
+        pr_body: prBodyInput.value.trim(),
+        target_branch: lastReportData.base_branch || "main",
+        github_token: userGitHubToken || null,
+      };
+
+      const res = await fetch(`/api/repair/${currentActiveJobId}/publish-pr`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to create Pull Request");
+      }
+
+      const result = await res.json();
+      prStatusMsg.className = "pr-status-msg active success";
+      prStatusMsg.innerHTML = `🎉 Pull Request #${result.pr_number} created successfully! <br><a href="${result.pr_url}" target="_blank" style="color: var(--accent-cyan); text-decoration: underline;">View Pull Request on GitHub ↗</a>`;
+      btnSubmitPR.textContent = "Pull Request Created";
+    } catch (err) {
+      prStatusMsg.className = "pr-status-msg active error";
+      prStatusMsg.textContent = `Error: ${err.message}`;
+      btnSubmitPR.disabled = false;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 8. Deterministic Benchmark Suite Modal
+  // ---------------------------------------------------------------------------
+
   btnRunBenchmark.addEventListener("click", async () => {
     modalBenchmark.classList.remove("hidden");
     benchmarkRunning.classList.remove("hidden");
@@ -422,7 +713,67 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Initial load
-  fetchHealth();
-  fetchTasks();
+  // ---------------------------------------------------------------------------
+  // Helper Utilities
+  // ---------------------------------------------------------------------------
+
+  function formatDiffSyntax(rawDiff) {
+    const lines = rawDiff.split("\n");
+    return lines
+      .map((line) => {
+        const escaped = escapeHtml(line);
+        if (line.startsWith("---") || line.startsWith("+++")) {
+          return `<span class="diff-header">${escaped}</span>`;
+        } else if (line.startsWith("@@")) {
+          return `<span class="diff-hunk">${escaped}</span>`;
+        } else if (line.startsWith("+")) {
+          return `<span class="diff-add">${escaped}</span>`;
+        } else if (line.startsWith("-")) {
+          return `<span class="diff-del">${escaped}</span>`;
+        }
+        return escaped;
+      })
+      .join("\n");
+  }
+
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function resetWorkflowUI() {
+    badgeAttempt.textContent = "Attempt: 0 / 3";
+    badgeStatus.className = "badge badge-idle";
+    badgeStatus.textContent = "Running";
+    diffViewer.innerHTML = "<code>/* Running evidence-gated repair harness... */</code>";
+    diffMeta.textContent = "Generating patch...";
+    btnCopyDiff.disabled = true;
+    btnDownloadPatch.disabled = true;
+    btnDownloadReport.disabled = true;
+    btnOpenPRModal.disabled = true;
+    preBaseline.textContent = "Running baseline tests...";
+    preVerification.textContent = "Pending verification...";
+    auditList.innerHTML = '<p class="empty-state">Repair running...</p>';
+    Object.values(stepNodes).forEach((n) => n && n.classList.remove("active", "done"));
+  }
+
+  function setLoadingState(isLoading, msg) {
+    btnStartRepair.disabled = isLoading;
+    btnRunBenchmark.disabled = isLoading;
+    if (isLoading) {
+      mainSpinner.classList.add("active");
+    } else {
+      mainSpinner.classList.remove("active");
+    }
+    progressText.textContent = msg;
+  }
+
+  // Initial Load
+  checkHealth();
+  verifyGitHubToken();
+  loadBenchmarkTasks();
 });

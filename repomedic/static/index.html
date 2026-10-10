@@ -3,19 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RepoMedic AI — Evidence-Gated Bug Repair Harness</title>
-  <meta name="description" content="Open-weight AI-powered Python bug-repair harness with deterministic policy gating, isolated sandboxing, and bounded retry loops.">
+  <title>RepoMedic AI — Real-World Evidence-Gated Bug Repair Harness</title>
+  <meta name="description" content="Open-weight AI-powered Python bug-repair harness with real GitHub integration, deterministic policy gating, isolated sandboxing, and bounded retry loops.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="dark-theme">
-  <!-- Background Glow FX -->
+  <!-- Ambient Lighting Effects -->
   <div class="glow-orb orb-1"></div>
   <div class="glow-orb orb-2"></div>
 
-  <!-- Header -->
+  <!-- App Header -->
   <header class="app-header">
     <div class="brand">
       <div class="brand-icon">
@@ -31,7 +31,12 @@
 
     <!-- Live Status Indicators -->
     <div class="header-status-group">
-      <div class="status-pill" id="pill-model" title="Model Connectivity">
+      <div class="status-pill" id="pill-github" title="GitHub Connection Status">
+        <span class="status-dot"></span>
+        <span class="status-label">GitHub: <strong id="lbl-github-user">Not Connected</strong></span>
+        <button id="btn-open-github-modal" class="pill-action-btn">Connect</button>
+      </div>
+      <div class="status-pill" id="pill-model" title="Coding Model Status">
         <span class="status-dot"></span>
         <span class="status-label">Model: <strong id="lbl-model-name">Checking...</strong></span>
       </div>
@@ -40,58 +45,104 @@
         <span class="status-label">Sandbox: <strong id="lbl-sandbox-mode">Checking...</strong></span>
       </div>
       <div class="status-pill" id="pill-mode" title="Deployment Environment">
-        <span class="status-label">Mode: <strong id="lbl-env-mode">Hosted / Demo</strong></span>
+        <span class="status-label">Mode: <strong id="lbl-env-mode">Real-World</strong></span>
       </div>
     </div>
   </header>
 
-  <!-- Main Container -->
+  <!-- Main Grid Layout -->
   <main class="main-layout">
-    <!-- Left Column: Configuration & Controls -->
+    <!-- Left Column: Source Selection & Controls -->
     <section class="panel control-panel">
       <div class="panel-header">
-        <h2>Repair Task Configuration</h2>
-        <span class="panel-badge">Interactive Demo</span>
+        <h2>Repository & Issue Input</h2>
+        <span class="panel-badge">Real-World Mode</span>
       </div>
 
-      <!-- Demo Task Selector -->
-      <div class="form-group">
-        <label for="task-select">Select Benchmark Task Fixture</label>
-        <select id="task-select" class="form-control">
-          <option value="">-- Choose a Deterministic Bug Task --</option>
-        </select>
-        <p class="field-hint">Predefined safe benchmark tasks covering arithmetic, boundaries, timeouts, and policy gates.</p>
+      <!-- Mode Selector Tabs -->
+      <div class="source-nav">
+        <button class="source-tab-btn active" data-source="github">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub Repo
+        </button>
+        <button class="source-tab-btn" data-source="local">
+          📁 Local Repo
+        </button>
+        <button class="source-tab-btn" data-source="fixture">
+          🎯 Predefined Fixture
+        </button>
+      </div>
+
+      <!-- Form Area: GitHub Mode -->
+      <div class="source-form-pane active" id="pane-source-github">
+        <div class="form-group">
+          <label for="github-repo-select">Target GitHub Repository</label>
+          <div class="input-with-button">
+            <select id="github-repo-select" class="form-control">
+              <option value="">-- Connect GitHub or Enter Manually --</option>
+            </select>
+            <button id="btn-refresh-repos" class="btn-mini" title="Refresh accessible repositories">🔄</button>
+          </div>
+          <input type="text" id="github-repo-manual" class="form-control mt-2" placeholder="Or enter: owner/repository (e.g. MDADILIFTEKHAR/RepoMedic-AI)">
+        </div>
+
+        <div class="form-group">
+          <label for="github-branch-select">Target Base Branch</label>
+          <select id="github-branch-select" class="form-control">
+            <option value="main">main</option>
+            <option value="master">master</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Form Area: Local Mode -->
+      <div class="source-form-pane" id="pane-source-local">
+        <div class="form-group">
+          <label for="local-repo-path">Local Repository Path</label>
+          <input type="text" id="local-repo-path" class="form-control" placeholder="C:/Users/name/projects/my-repo or /home/user/repo">
+          <p class="field-hint">RepoMedic will create an isolated Git worktree. Your working tree and uncommitted changes are strictly preserved.</p>
+        </div>
+      </div>
+
+      <!-- Form Area: Fixture Mode -->
+      <div class="source-form-pane" id="pane-source-fixture">
+        <div class="form-group">
+          <label for="task-select">Deterministic Benchmark Task</label>
+          <select id="task-select" class="form-control">
+            <option value="">-- Choose a Deterministic Bug Task --</option>
+          </select>
+          <p class="field-hint">Reproducible benchmark fixtures covering arithmetic, boundary bugs, timeouts, and policy gating.</p>
+        </div>
       </div>
 
       <!-- Bug Description Input -->
       <div class="form-group">
-        <label for="issue-desc">Bug Description & Expected Behavior</label>
-        <textarea id="issue-desc" class="form-control" rows="4" placeholder="Describe the bug or failure symptom..."></textarea>
+        <label for="issue-desc">Real Bug Description / Test Failure Symptom</label>
+        <textarea id="issue-desc" class="form-control" rows="4" placeholder="Describe the actual bug, failing test name, or expected behavior..."></textarea>
       </div>
 
-      <!-- Action Button -->
+      <!-- Primary Action Buttons -->
       <div class="action-row">
         <button id="btn-start-repair" class="btn btn-primary">
-          <span class="btn-icon">⚡</span> Run Repair Harness
+          <span class="btn-icon">⚡</span> Run Evidence-Gated Repair
         </button>
         <button id="btn-run-benchmark" class="btn btn-secondary">
-          <span class="btn-icon">📊</span> Run Full Benchmark (10 Tasks)
+          <span class="btn-icon">📊</span> Run Deterministic Benchmark (10 Tasks)
         </button>
       </div>
 
-      <!-- Harness Core Features Info -->
+      <!-- Safety Invariants -->
       <div class="info-card">
-        <h3>🛡️ Evidence-Gated Invariants</h3>
+        <h3>🛡️ Real-World Safety Invariants</h3>
         <ul>
-          <li><strong>Zero Self-Attestation</strong>: A repair is never deemed successful merely because the model claims it works.</li>
-          <li><strong>Deterministic Patch Gate</strong>: Path traversals, protected files, and test alteration attempts are blocked before execution.</li>
-          <li><strong>Isolated Execution</strong>: Patches run strictly inside disposable worktrees and restricted containers.</li>
-          <li><strong>Bounded Loop</strong>: Genuine failure traces are fed back for up to 3 repair attempts.</li>
+          <li><strong>No Host Arbitrary Execution</strong>: Untrusted repository tests require isolated Docker containerization with disabled network access.</li>
+          <li><strong>Zero Hallucinated Success</strong>: A patch is verified only when genuine test execution passes with code 0.</li>
+          <li><strong>Mandatory PR Approval</strong>: Changes are never committed or pushed to your GitHub repository without explicit confirmation.</li>
         </ul>
       </div>
     </section>
 
-    <!-- Right Column: Workflow, Timeline, and Diff Viewer -->
+    <!-- Right Column: Timeline, Diff Viewer, & Outputs -->
     <section class="panel output-panel">
       <div class="panel-header">
         <h2>Repair Execution & Evidence Audit</h2>
@@ -101,60 +152,87 @@
         </div>
       </div>
 
-      <!-- Workflow Stepper Timeline -->
-      <div class="stepper-container">
-        <div class="step-item" id="step-inspect">
-          <div class="step-num">1</div>
-          <div class="step-title">Scan Repo</div>
-        </div>
-        <div class="step-line"></div>
-        <div class="step-item" id="step-baseline">
-          <div class="step-num">2</div>
-          <div class="step-title">Baseline Test</div>
-        </div>
-        <div class="step-line"></div>
-        <div class="step-item" id="step-generate">
-          <div class="step-num">3</div>
-          <div class="step-title">Model Diff</div>
-        </div>
-        <div class="step-line"></div>
-        <div class="step-item" id="step-gate">
-          <div class="step-num">4</div>
-          <div class="step-title">Policy Gate</div>
-        </div>
-        <div class="step-line"></div>
-        <div class="step-item" id="step-verify">
-          <div class="step-num">5</div>
-          <div class="step-title">Sandbox Test</div>
-        </div>
-        <div class="step-line"></div>
-        <div class="step-item" id="step-outcome">
-          <div class="step-num">6</div>
-          <div class="step-title">Verified</div>
+      <!-- State Machine Stepper -->
+      <div class="stepper-scroll">
+        <div class="stepper-container">
+          <div class="step-item" id="step-created">
+            <div class="step-num">1</div>
+            <div class="step-title">Created</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-repo-validated">
+            <div class="step-num">2</div>
+            <div class="step-title">Repo Validated</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-baseline-tested">
+            <div class="step-num">3</div>
+            <div class="step-title">Baseline Tested</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-analyzed">
+            <div class="step-num">4</div>
+            <div class="step-title">Analyzed</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-patch-proposed">
+            <div class="step-num">5</div>
+            <div class="step-title">Patch Proposed</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-patch-validated">
+            <div class="step-num">6</div>
+            <div class="step-title">Patch Validated</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-patch-applied">
+            <div class="step-num">7</div>
+            <div class="step-title">Patch Applied</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-tested">
+            <div class="step-num">8</div>
+            <div class="step-title">Tested</div>
+          </div>
+          <div class="step-line"></div>
+          <div class="step-item" id="step-verified">
+            <div class="step-num">9</div>
+            <div class="step-title">Verified</div>
+          </div>
         </div>
       </div>
 
       <!-- Live Progress Message -->
       <div id="progress-box" class="progress-box">
         <span class="spinner" id="main-spinner"></span>
-        <span id="progress-text">Awaiting task selection...</span>
+        <span id="progress-text">Awaiting task submission...</span>
       </div>
 
-      <!-- Results & Diff Section -->
+      <!-- Results & Action Bar -->
       <div class="tabs-container">
-        <div class="tabs-nav">
-          <button class="tab-btn active" data-tab="tab-diff">Verified Diff</button>
-          <button class="tab-btn" data-tab="tab-tests">Test Evidence</button>
-          <button class="tab-btn" data-tab="tab-audit">Audit History</button>
+        <div class="tabs-nav-bar">
+          <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="tab-diff">Verified Diff</button>
+            <button class="tab-btn" data-tab="tab-tests">Test Evidence</button>
+            <button class="tab-btn" data-tab="tab-audit">Audit History</button>
+          </div>
+
+          <!-- Real-world Action Buttons -->
+          <div class="tab-actions">
+            <button id="btn-copy-diff" class="btn-mini" disabled>📋 Copy Diff</button>
+            <button id="btn-download-patch" class="btn-mini" disabled>📥 Download .patch</button>
+            <button id="btn-download-report" class="btn-mini" disabled>📄 Download Report</button>
+            <button id="btn-open-pr-modal" class="btn-mini btn-pr-action" disabled>🚀 Create GitHub PR</button>
+          </div>
         </div>
 
         <!-- Tab 1: Diff Viewer -->
         <div class="tab-pane active" id="tab-diff">
           <div class="diff-header-bar">
             <span id="diff-meta">No patch generated yet.</span>
-            <button id="btn-copy-diff" class="btn-mini" disabled>Copy Diff</button>
+            <span id="diff-stats" class="diff-stats"></span>
           </div>
-          <pre id="diff-viewer" class="code-viewer"><code>/* Unified diff output will appear here with syntax coloring */</code></pre>
+          <pre id="diff-viewer" class="code-viewer"><code>/* Verified unified diff patch will appear here with syntax coloring */</code></pre>
         </div>
 
         <!-- Tab 2: Test Evidence Comparison -->
@@ -165,7 +243,7 @@
               <pre id="pre-baseline" class="log-viewer"><code>No baseline tests executed yet.</code></pre>
             </div>
             <div class="test-col">
-              <h4>🟢 Verification Test Execution</h4>
+              <h4>🟢 Verification Test Output</h4>
               <pre id="pre-verification" class="log-viewer"><code>No verification tests executed yet.</code></pre>
             </div>
           </div>
@@ -181,17 +259,88 @@
     </section>
   </main>
 
+  <!-- GitHub Connection Modal -->
+  <div id="modal-github" class="modal-overlay hidden">
+    <div class="modal-content modal-sm">
+      <div class="modal-header">
+        <h2>Connect GitHub Account</h2>
+        <button id="btn-close-github-modal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Connect using a GitHub Personal Access Token (classic or fine-grained) with <code>repo</code> permissions, or authenticate via OAuth.</p>
+        
+        <div id="oauth-section" class="oauth-box hidden">
+          <button id="btn-start-oauth" class="btn btn-secondary w-100">
+            Authenticate with GitHub OAuth
+          </button>
+          <div class="divider"><span>OR USE PERSONAL ACCESS TOKEN</span></div>
+        </div>
+
+        <div class="form-group">
+          <label for="pat-input">GitHub Personal Access Token (PAT)</label>
+          <input type="password" id="pat-input" class="form-control" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+          <p class="field-hint">Token is kept in browser memory and transmitted over HTTPS. It is never logged or written to disk.</p>
+        </div>
+
+        <div class="action-row mt-3">
+          <button id="btn-save-pat" class="btn btn-primary">Connect Account</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Explicit PR Confirmation Modal -->
+  <div id="modal-pr" class="modal-overlay hidden">
+    <div class="modal-content modal-md">
+      <div class="modal-header">
+        <h2>Approve GitHub Pull Request Creation</h2>
+        <button id="btn-close-pr-modal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Review the details below. Creating a Pull Request will push a disposable branch to your GitHub repository and open a PR for review.</p>
+
+        <div class="form-group">
+          <label>Target Repository & Branch</label>
+          <div class="read-only-pill" id="pr-repo-pill">repository: branch</div>
+        </div>
+
+        <div class="form-group">
+          <label for="pr-title-input">Pull Request Title</label>
+          <input type="text" id="pr-title-input" class="form-control" value="RepoMedic AI: Autonomous Bug Fix">
+        </div>
+
+        <div class="form-group">
+          <label for="pr-body-input">Pull Request Description</label>
+          <textarea id="pr-body-input" class="form-control" rows="5"></textarea>
+        </div>
+
+        <div class="approval-checkbox-group">
+          <input type="checkbox" id="chk-pr-confirm">
+          <label for="chk-pr-confirm">
+            <strong>I explicitly approve publishing this verified patch</strong> to my GitHub repository.
+          </label>
+        </div>
+
+        <div id="pr-status-msg" class="pr-status-msg"></div>
+
+        <div class="action-row mt-3">
+          <button id="btn-submit-pr" class="btn btn-primary" disabled>Confirm & Open Pull Request</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Benchmark Modal Overlay -->
   <div id="modal-benchmark" class="modal-overlay hidden">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>RepoMedic AI Benchmark Suite (10 Tasks)</h2>
+        <h2>RepoMedic AI Deterministic Benchmark (10 Tasks)</h2>
         <button id="btn-close-modal" class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
         <div id="benchmark-running-state" class="progress-box">
           <span class="spinner"></span>
-          <span>Running deterministic benchmark across all 10 tasks...</span>
+          <span>Running deterministic evaluation across all 10 tasks...</span>
         </div>
         <div id="benchmark-results-container" class="hidden">
           <div class="metrics-grid" id="metrics-cards"></div>
@@ -214,6 +363,7 @@
     </div>
   </div>
 
+  <!-- App Footer -->
   <footer class="app-footer">
     <p>RepoMedic AI &copy; 2026. Built by <a href="https://github.com/MDADILIFTEKHAR" target="_blank">MDADILIFTEKHAR</a>. Open-weight coding model harness compliant with Agent Skill Open Standard.</p>
   </footer>
