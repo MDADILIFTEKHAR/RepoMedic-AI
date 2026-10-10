@@ -75,6 +75,10 @@
 
       <!-- Form Area: GitHub Mode -->
       <div class="source-form-pane active" id="pane-source-github">
+        <div id="github-docker-warning" class="docker-warning-banner hidden">
+          <strong>⚠️ Docker Sandbox Offline</strong>: Arbitrary repository execution requires an isolated Docker container to protect the host machine. You can connect repositories and inspect code, or switch to <a id="btn-switch-fixtures-link">Predefined Fixtures</a> to run full bug repair sessions without Docker.
+        </div>
+
         <div class="form-group">
           <label for="github-repo-select">Target GitHub Repository</label>
           <div class="input-with-button">
@@ -261,29 +265,100 @@
 
   <!-- GitHub Connection Modal -->
   <div id="modal-github" class="modal-overlay hidden">
-    <div class="modal-content modal-sm">
+    <div class="modal-content modal-md">
       <div class="modal-header">
-        <h2>Connect GitHub Account</h2>
+        <h2>GitHub Account Connection</h2>
         <button id="btn-close-github-modal" class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Connect using a GitHub Personal Access Token (classic or fine-grained) with <code>repo</code> permissions, or authenticate via OAuth.</p>
-        
-        <div id="oauth-section" class="oauth-box hidden">
-          <button id="btn-start-oauth" class="btn btn-secondary w-100">
-            Authenticate with GitHub OAuth
-          </button>
-          <div class="divider"><span>OR USE PERSONAL ACCESS TOKEN</span></div>
+        <!-- Connected Account View -->
+        <div id="github-connected-view" class="hidden">
+          <div class="auth-user-card">
+            <img id="connected-user-avatar" class="auth-avatar" src="" alt="Avatar">
+            <div class="auth-user-info">
+              <div class="auth-user-login">
+                <span id="connected-user-login">@octocat</span>
+                <span id="connected-user-scope" class="badge-scope">repo</span>
+              </div>
+              <div id="connected-user-name" class="auth-user-meta">GitHub User</div>
+            </div>
+          </div>
+          <p class="field-hint mb-3">Your GitHub account is connected. RepoMedic can clone repositories, inspect branches, and create verified Pull Requests upon your explicit approval.</p>
+          <div class="action-row">
+            <button id="btn-disconnect-gh" class="btn btn-secondary">Disconnect GitHub Account</button>
+            <button id="btn-done-gh" class="btn btn-primary">Done</button>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label for="pat-input">GitHub Personal Access Token (PAT)</label>
-          <input type="password" id="pat-input" class="form-control" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
-          <p class="field-hint">Token is kept in browser memory and transmitted over HTTPS. It is never logged or written to disk.</p>
-        </div>
+        <!-- Disconnected Connect Form -->
+        <div id="github-connect-form">
+          <div class="modal-tabs">
+            <button class="modal-tab-btn active" data-authtab="tab-pat">Personal Access Token (Recommended)</button>
+            <button class="modal-tab-btn" data-authtab="tab-oauth">GitHub OAuth</button>
+          </div>
 
-        <div class="action-row mt-3">
-          <button id="btn-save-pat" class="btn btn-primary">Connect Account</button>
+          <!-- PAT Pane -->
+          <div class="auth-pane active" id="auth-pane-pat">
+            <p class="modal-desc">Connect instantly with a classic or fine-grained Personal Access Token.</p>
+            
+            <div class="info-card mb-2">
+              <p><strong>Quick Setup:</strong></p>
+              <ul style="margin: 0.35rem 0 0.5rem 1.25rem; font-size: 0.82rem; color: var(--text-muted);">
+                <li><strong>Classic Token</strong>: Generate with <code>repo</code> and <code>read:user</code> scopes. <a href="https://github.com/settings/tokens/new?description=RepoMedic+AI&scopes=repo,read:user" target="_blank" style="color: var(--accent-cyan); text-decoration: underline;">👉 Click to Generate with Pre-filled Scopes</a></li>
+                <li><strong>Fine-Grained Token</strong>: Under Repository Permissions, select <strong>Contents: Read and write</strong>, <strong>Pull requests: Read and write</strong>, and <strong>Metadata: Read-only</strong>.</li>
+              </ul>
+            </div>
+
+            <div class="form-group">
+              <label for="pat-input">GitHub Personal Access Token</label>
+              <input type="password" id="pat-input" class="form-control" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx or github_pat_xxxxxxxx">
+              <p class="field-hint">Token is kept in browser memory and transmitted only to GitHub. It is never logged or written to disk.</p>
+            </div>
+
+            <div id="pat-feedback" class="auth-feedback"></div>
+
+            <div class="action-row mt-2">
+              <button id="btn-save-pat" class="btn btn-primary w-100">
+                <span class="btn-icon">🔑</span> Verify & Connect Token
+              </button>
+            </div>
+          </div>
+
+          <!-- OAuth Pane -->
+          <div class="auth-pane" id="auth-pane-oauth">
+            <div id="oauth-configured-box" class="hidden">
+              <p class="modal-desc">GitHub OAuth App is configured on this server. Click below to sign in with GitHub.</p>
+              <button id="btn-start-oauth" class="btn btn-primary w-100">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle; margin-right: 6px;"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                Authorize with GitHub OAuth
+              </button>
+            </div>
+
+            <div id="oauth-unconfigured-box">
+              <div class="auth-feedback info active mb-3">
+                <strong>OAuth Not Configured on Server</strong><br>
+                For local development, <strong>Personal Access Token</strong> is the fastest method. To enable 1-click OAuth, enter your GitHub OAuth App credentials below:
+              </div>
+
+              <div class="form-group">
+                <label for="oauth-client-id-input">GitHub OAuth Client ID</label>
+                <input type="text" id="oauth-client-id-input" class="form-control" placeholder="Iv1.xxxxxxxxxxxx">
+              </div>
+
+              <div class="form-group">
+                <label for="oauth-client-secret-input">GitHub OAuth Client Secret</label>
+                <input type="password" id="oauth-client-secret-input" class="form-control" placeholder="xxxxxxxxxxxxxxxxxxxxxxxx">
+              </div>
+
+              <div id="oauth-feedback" class="auth-feedback"></div>
+
+              <div class="action-row mt-2">
+                <button id="btn-save-oauth-config" class="btn btn-secondary w-100">
+                  Save OAuth App Credentials & Authorize
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

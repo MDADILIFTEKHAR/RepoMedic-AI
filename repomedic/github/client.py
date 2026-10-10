@@ -164,7 +164,10 @@ class GitHubClient:
                 raise GitHubAuthenticationError("GitHub token is invalid or expired.")
             if resp.status_code != 200:
                 raise GitHubError(f"GitHub /user error HTTP {resp.status_code}")
-            return resp.json()
+            data = resp.json()
+            raw_scopes = resp.headers.get("x-oauth-scopes", "")
+            data["scopes"] = [s.strip() for s in raw_scopes.split(",") if s.strip()]
+            return data
 
     async def list_user_repositories(
         self,

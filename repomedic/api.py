@@ -15,11 +15,11 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 import uuid
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Response, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from repomedic import __version__
 from repomedic.config import Settings, get_settings
@@ -76,6 +76,13 @@ class GitHubOAuthCallbackRequest(BaseModel):
     """Payload from GitHub OAuth redirect callback."""
     code: str
     state: Optional[str] = None
+
+
+class GitHubOAuthConfigRequest(BaseModel):
+    """Payload to configure GitHub OAuth credentials dynamically."""
+    client_id: str = Field(..., description="GitHub OAuth App Client ID")
+    client_secret: str = Field(..., description="GitHub OAuth App Client Secret")
+    redirect_uri: Optional[str] = Field(default=None, description="Optional redirect URI override")
 
 
 class RepairRequest(BaseModel):
@@ -206,6 +213,21 @@ async def get_github_status() -> Dict[str, Any]:
     }
 
 
+@app.post("/api/github/oauth/configure")
+async def configure_github_oauth(req: GitHubOAuthConfigRequest) -> Dict[str, Any]:
+    """Configure or update GitHub OAuth App credentials at runtime."""
+    settings = get_settings()
+    settings.github_client_id = req.client_id.strip()
+    settings.github_client_secret = SecretStr(req.client_secret.strip())
+    if req.redirect_uri:
+        settings.github_redirect_uri = req.redirect_uri.strip()
+    return {
+        "status": "configured",
+        "client_id": settings.github_client_id,
+        "redirect_uri": settings.github_redirect_uri,
+    }
+
+
 @app.get("/api/github/oauth/url")
 async def get_github_oauth_url() -> Dict[str, str]:
     """Generate GitHub OAuth authorization URL with CSRF state protection."""
@@ -213,7 +235,7 @@ async def get_github_oauth_url() -> Dict[str, str]:
     if not settings.github_client_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="GitHub OAuth is not configured on this server (REPOMEDIC_GITHUB_CLIENT_ID missing). Use Personal Access Token instead.",
+            detail="GitHub OAuth is not configured on this server (REPOMEDIC_GITHUB_CLIENT_ID missing). Use Personal Access Token or configure OAuth credentials.",
         )
     state = uuid.uuid4().hex
     oauth_states[state] = time.time()
@@ -225,9 +247,122 @@ async def get_github_oauth_url() -> Dict[str, str]:
     return {"authorization_url": url, "state": state}
 
 
+@app.get("/api/github/oauth/callback", response_class=HTMLResponse)
+async def github_oauth_callback_browser(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
+) -> HTMLResponse:
+    """Handle browser redirect from GitHub OAuth authorization consent."""
+    if error:
+        err_msg = error_description or error or "OAuth authorization declined."
+        html_error = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RepoMedic AI — OAuth Error</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+    .card {{ background: #131b2e; border: 1px solid #ef4444; border-radius: 12px; padding: 2.5rem; max-width: 480px; text-align: center; box-shadow: 0 20px 35px rgba(0,0,0,0.5); }}
+    h2 {{ color: #f87171; margin-top: 0; }}
+    p {{ color: #94a3b8; font-size: 0.95rem; line-height: 1.5; }}
+    .btn {{ display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 0.65rem 1.4rem; border-radius: 8px; font-weight: 600; margin-top: 1.5rem; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>GitHub OAuth Failed</h2>
+    <p>{err_msg}</p>
+    <a href="/" class="btn">Return to RepoMedic AI</a>
+  </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html_error, status_code=400)
+
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth code in callback.")
+
+    settings = get_settings()
+    if not settings.github_client_id or not settings.github_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub OAuth credentials are not configured on this server.",
+        )
+
+    # Validate state if supplied
+    if state and state in oauth_states:
+        del oauth_states[state]
+
+    try:
+        token = await github_client.exchange_code_for_token(
+            client_id=settings.github_client_id,
+            client_secret=settings.github_client_secret.get_secret_value(),
+            code=code,
+            redirect_uri=settings.github_redirect_uri,
+        )
+        user_info = await github_client.get_authenticated_user(token)
+        user_login = user_info.get("login", "user")
+
+        html_success = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RepoMedic AI — GitHub Authenticated</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+    .card {{ background: #131b2e; border: 1px solid #10b981; border-radius: 12px; padding: 2.5rem; max-width: 440px; text-align: center; box-shadow: 0 20px 35px rgba(0,0,0,0.5); }}
+    .spinner {{ width: 36px; height: 36px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #10b981; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1.25rem; }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    h2 {{ color: #34d399; margin: 0 0 0.5rem; }}
+    p {{ color: #94a3b8; font-size: 0.95rem; margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h2>Connected Successfully!</h2>
+    <p>Logged in as <strong>@{user_login}</strong>. Redirecting to RepoMedic AI...</p>
+  </div>
+  <script>
+    try {{
+      localStorage.setItem("repomedic_gh_token", "{token}");
+    }} catch(e) {{}}
+    setTimeout(function() {{
+      window.location.href = "/";
+    }}, 800);
+  </script>
+</body>
+</html>"""
+        return HTMLResponse(content=html_success)
+    except Exception as ex:
+        html_fail = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RepoMedic AI — OAuth Error</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b0f19; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+    .card {{ background: #131b2e; border: 1px solid #ef4444; border-radius: 12px; padding: 2.5rem; max-width: 480px; text-align: center; box-shadow: 0 20px 35px rgba(0,0,0,0.5); }}
+    h2 {{ color: #f87171; margin-top: 0; }}
+    p {{ color: #94a3b8; font-size: 0.95rem; line-height: 1.5; }}
+    .btn {{ display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 0.65rem 1.4rem; border-radius: 8px; font-weight: 600; margin-top: 1.5rem; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Token Exchange Failed</h2>
+    <p>{str(ex)}</p>
+    <a href="/" class="btn">Return to RepoMedic AI</a>
+  </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html_fail, status_code=500)
+
+
 @app.post("/api/github/oauth/callback")
 async def github_oauth_callback(req: GitHubOAuthCallbackRequest) -> Dict[str, Any]:
-    """Exchange OAuth authorization code for an access token."""
+    """Exchange OAuth authorization code for an access token (JSON API)."""
     settings = get_settings()
     if not settings.github_client_id or not settings.github_client_secret:
         raise HTTPException(
@@ -253,6 +388,7 @@ async def github_oauth_callback(req: GitHubOAuthCallbackRequest) -> Dict[str, An
                 "login": user_info.get("login"),
                 "name": user_info.get("name"),
                 "avatar_url": user_info.get("avatar_url"),
+                "scopes": user_info.get("scopes", []),
             },
         }
     except GitHubAuthenticationError as ex:
@@ -263,13 +399,16 @@ async def github_oauth_callback(req: GitHubOAuthCallbackRequest) -> Dict[str, An
 
 @app.post("/api/github/auth")
 async def authenticate_github_token(req: GitHubAuthRequest) -> Dict[str, Any]:
-    """Validate a user-supplied GitHub Personal Access Token."""
+    """Validate a user-supplied GitHub Personal Access Token (classic or fine-grained)."""
     clean_token = req.token.strip()
     if not clean_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token cannot be empty.")
 
     try:
         user_info = await github_client.get_authenticated_user(clean_token)
+        scopes = user_info.get("scopes", [])
+        has_repo_scope = "repo" in scopes or any("repo:" in s for s in scopes) or len(scopes) == 0  # fine-grained PATs don't report x-oauth-scopes
+
         return {
             "authenticated": True,
             "user": {
@@ -277,7 +416,12 @@ async def authenticate_github_token(req: GitHubAuthRequest) -> Dict[str, Any]:
                 "name": user_info.get("name"),
                 "avatar_url": user_info.get("avatar_url"),
                 "html_url": user_info.get("html_url"),
+                "public_repos": user_info.get("public_repos", 0),
+                "total_private_repos": user_info.get("total_private_repos", 0),
+                "scopes": scopes,
             },
+            "has_repo_scope": has_repo_scope,
+            "warning": None if has_repo_scope else "Token is valid, but missing 'repo' scope. Pull Request creation and private repo access require the 'repo' scope.",
         }
     except GitHubAuthenticationError as ex:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
@@ -285,7 +429,11 @@ async def authenticate_github_token(req: GitHubAuthRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"GitHub validation error: {str(ex)}")
 
 
-def _resolve_token(explicit_token: Optional[str] = None, header_token: Optional[str] = None) -> str:
+def _resolve_token(
+    explicit_token: Optional[str] = None,
+    header_token: Optional[str] = None,
+    required: bool = True,
+) -> Optional[str]:
     """Resolve GitHub token from request, header, or environment."""
     settings = get_settings()
     if explicit_token and explicit_token.strip():
@@ -297,10 +445,31 @@ def _resolve_token(explicit_token: Optional[str] = None, header_token: Optional[
         return clean_hdr
     if settings.github_default_token and settings.github_default_token.get_secret_value():
         return settings.github_default_token.get_secret_value()
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="GitHub authentication required. Please connect your GitHub account or provide a token.",
-    )
+    if required:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="GitHub authentication required. Please connect your GitHub account or provide a token.",
+        )
+    return None
+
+
+@app.get("/api/github/repos/{owner}/{repo}")
+async def get_github_repo_metadata(
+    owner: str,
+    repo: str,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Inspect and validate metadata for a specific repository."""
+    token = _resolve_token(header_token=authorization, required=False) or ""
+    try:
+        summary = await github_client.get_repository(token, owner=owner, repo=repo)
+        return summary.model_dump()
+    except GitHubResourceNotFoundError as ex:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
+    except GitHubAuthenticationError as ex:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(ex))
 
 
 @app.get("/api/github/repos")
@@ -445,7 +614,11 @@ async def start_repair(
         except GitHubValidationError as ex:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
 
-        auth_token = _resolve_token(explicit_token=req.github_token, header_token=authorization)
+        auth_token = _resolve_token(
+            explicit_token=req.github_token,
+            header_token=authorization,
+            required=False,
+        )
         remote_clone_url = f"https://github.com/{owner}/{repo}"
 
         if not req.issue_description or not req.issue_description.strip():

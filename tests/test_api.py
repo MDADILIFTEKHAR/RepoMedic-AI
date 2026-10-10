@@ -139,3 +139,25 @@ def test_serve_root(client):
     res = client.get("/")
     assert res.status_code == 200
     assert "RepoMedic" in res.text
+
+
+def test_github_oauth_configure_and_callback(client):
+    # Test runtime OAuth configuration
+    conf_res = client.post(
+        "/api/github/oauth/configure",
+        json={"client_id": "test_cid_123", "client_secret": "test_csecret_456"},
+    )
+    assert conf_res.status_code == 200
+    assert conf_res.json()["client_id"] == "test_cid_123"
+
+    # Test OAuth URL generation now works
+    url_res = client.get("/api/github/oauth/url")
+    assert url_res.status_code == 200
+    assert "authorization_url" in url_res.json()
+    assert "test_cid_123" in url_res.json()["authorization_url"]
+
+    # Test OAuth browser callback with error param
+    err_res = client.get("/api/github/oauth/callback?error=access_denied&error_description=User+cancelled")
+    assert err_res.status_code == 400
+    assert "User cancelled" in err_res.text
+
