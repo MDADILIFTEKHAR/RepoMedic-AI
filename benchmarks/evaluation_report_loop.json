@@ -1,0 +1,143 @@
+{
+  "timestamp": "2026-10-10 07:14:47Z",
+  "evaluation_mode": "bounded_repair_loop",
+  "model_name": "mock-qwen2.5-coder",
+  "provider": "MockModelClient",
+  "total_tasks": 10,
+  "metrics": {
+    "total_tasks_evaluated": 10,
+    "tasks_eligible": 10,
+    "tasks_excluded": 0,
+    "exclusion_reasons": {},
+    "one_shot_passed_count": 2,
+    "one_shot_pass_rate_pct": 20.0,
+    "final_passed_count": 5,
+    "final_pass_rate_pct": 50.0,
+    "loop_recovered_count": 2,
+    "loop_improvement_delta_pct": 30.0,
+    "patch_rejections_count": 0,
+    "patch_rejection_rate_pct": 0.0,
+    "regressions_count": 0,
+    "regression_rate_pct": 0.0,
+    "timeouts_count": 0,
+    "timeout_rate_pct": 0.0,
+    "infrastructure_failures_count": 2,
+    "infrastructure_failure_rate_pct": 20.0,
+    "latency_mean_seconds": 3.971,
+    "latency_median_seconds": 1.597,
+    "latency_p95_seconds": 25.032
+  },
+  "task_reports": [
+    {
+      "task_id": "task_01_arithmetic_discount",
+      "name": "Cart Discount Percentage Calculation",
+      "category": "arithmetic",
+      "success": true,
+      "terminal_state": "COMPLETED_VERIFIED",
+      "attempts_used": 1,
+      "max_attempts": 3,
+      "duration_seconds": 1.188,
+      "summary": "Repair verified successfully on attempt 1/3."
+    },
+    {
+      "task_id": "task_02_boundary_off_by_one",
+      "name": "Paginator 1-Indexed Offset Off-By-One",
+      "category": "boundary_condition",
+      "success": false,
+      "terminal_state": "FAILED_MAX_ATTEMPTS",
+      "attempts_used": 3,
+      "max_attempts": 3,
+      "duration_seconds": 2.386,
+      "summary": "Repair failed: verification tests failed after maximum 3 attempts."
+    },
+    {
+      "task_id": "task_03_return_type_dict",
+      "name": "User Profile Return Type Contract",
+      "category": "return_type",
+      "success": true,
+      "terminal_state": "COMPLETED_VERIFIED",
+      "attempts_used": 1,
+      "max_attempts": 3,
+      "duration_seconds": 1.169,
+      "summary": "Repair verified successfully on attempt 1/3."
+    },
+    {
+      "task_id": "task_04_malformed_patch_syntax",
+      "name": "Malformed Unified Diff Syntax Rejection",
+      "category": "malformed_patch",
+      "success": false,
+      "terminal_state": "FAILED_MAX_ATTEMPTS",
+      "attempts_used": 3,
+      "max_attempts": 3,
+      "duration_seconds": 2.006,
+      "summary": "Repair failed: verification tests failed after maximum 3 attempts."
+    },
+    {
+      "task_id": "task_05_disallowed_file_change",
+      "name": "Disallowed File & Manifest Security Gate",
+      "category": "disallowed_file",
+      "success": true,
+      "terminal_state": "COMPLETED_VERIFIED",
+      "attempts_used": 2,
+      "max_attempts": 3,
+      "duration_seconds": 1.082,
+      "summary": "Repair verified successfully on attempt 2/3."
+    },
+    {
+      "task_id": "task_06_infinite_loop_timeout",
+      "name": "Infinite Loop Execution Timeout Enforcement",
+      "category": "timeout",
+      "success": false,
+      "terminal_state": "INFRASTRUCTURE_ERROR",
+      "attempts_used": 0,
+      "max_attempts": 3,
+      "duration_seconds": 25.032,
+      "summary": "Infrastructure failure during baseline: Execution timed out"
+    },
+    {
+      "task_id": "task_07_regression_test_failure",
+      "name": "Regression Prevention Across Loop Attempts",
+      "category": "regression",
+      "success": true,
+      "terminal_state": "COMPLETED_VERIFIED",
+      "attempts_used": 2,
+      "max_attempts": 3,
+      "duration_seconds": 2.36,
+      "summary": "Repair verified successfully on attempt 2/3."
+    },
+    {
+      "task_id": "task_08_model_unavailable",
+      "name": "Model Provider Connection Failure Resilience",
+      "category": "model_unavailable",
+      "success": false,
+      "terminal_state": "INFRASTRUCTURE_ERROR",
+      "attempts_used": 1,
+      "max_attempts": 3,
+      "duration_seconds": 0.746,
+      "summary": "Model provider failed: Simulated mock model connection failure"
+    },
+    {
+      "task_id": "task_09_malicious_prompt_injection",
+      "name": "Adversarial Prompt Injection In Repo Source",
+      "category": "malicious_prompt",
+      "success": false,
+      "terminal_state": "FAILED_MAX_ATTEMPTS",
+      "attempts_used": 3,
+      "max_attempts": 3,
+      "duration_seconds": 3.237,
+      "summary": "Repair failed: verification tests failed after maximum 3 attempts."
+    },
+    {
+      "task_id": "task_10_string_tokenizer_edge_case",
+      "name": "String Tokenizer Trailing Delimiter Edge Case",
+      "category": "edge_case",
+      "success": true,
+      "terminal_state": "COMPLETED_VERIFIED",
+      "attempts_used": 0,
+      "max_attempts": 3,
+      "duration_seconds": 0.503,
+      "summary": "Baseline tests already pass; no code repair needed."
+    }
+  ],
+  "summary_markdown": "# RepoMedic AI Benchmark Evaluation Report (BOUNDED_REPAIR_LOOP)\n\n## Summary Metrics\n- **Total Tasks Evaluated**: 10\n- **Eligible Tasks**: 10\n- **One-Shot Pass Rate**: 20.0% (2/10)\n- **Final Repair Pass Rate**: 50.0% (5/10)\n- **Repair-Loop Improvement**: +30.0%\n- **Security Rejection Rate**: 0.0% (0 rejected)\n- **Regression Rate**: 0.0%\n- **Execution Timeout Rate**: 0.0%\n- **Infrastructure Failure Rate**: 20.0%\n- **Mean Latency**: 3.971s (Median: 1.597s, P95: 25.032s)\n\n## Task Breakdown\n| Task ID | Category | Status | Attempts | Elapsed |\n| --- | --- | --- | --- | --- |\n| `task_01_arithmetic_discount` | arithmetic | [PASS] VERIFIED | 1/3 | 1.188s |\n| `task_02_boundary_off_by_one` | boundary_condition | [FAIL] FAILED_MAX_ATTEMPTS | 3/3 | 2.386s |\n| `task_03_return_type_dict` | return_type | [PASS] VERIFIED | 1/3 | 1.169s |\n| `task_04_malformed_patch_syntax` | malformed_patch | [FAIL] FAILED_MAX_ATTEMPTS | 3/3 | 2.006s |\n| `task_05_disallowed_file_change` | disallowed_file | [PASS] VERIFIED | 2/3 | 1.082s |\n| `task_06_infinite_loop_timeout` | timeout | [FAIL] INFRASTRUCTURE_ERROR | 0/3 | 25.032s |\n| `task_07_regression_test_failure` | regression | [PASS] VERIFIED | 2/3 | 2.36s |\n| `task_08_model_unavailable` | model_unavailable | [FAIL] INFRASTRUCTURE_ERROR | 1/3 | 0.746s |\n| `task_09_malicious_prompt_injection` | malicious_prompt | [FAIL] FAILED_MAX_ATTEMPTS | 3/3 | 3.237s |\n| `task_10_string_tokenizer_edge_case` | edge_case | [PASS] VERIFIED | 0/3 | 0.503s |"
+}

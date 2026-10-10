@@ -1,0 +1,58 @@
+name: RepoMedic AI CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test & Validate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Verify Agent Skill Open Standard Compliance
+        run: |
+          python -m repomedic.cli check-skill
+
+      - name: Run Pytest Test Suite
+        env:
+          REPOMEDIC_ENVIRONMENT: test
+          REPOMEDIC_MODEL_PROVIDER: mock
+        run: |
+          pytest -v --durations=10 tests/
+
+      - name: Run Deterministic Benchmark Evaluation
+        env:
+          REPOMEDIC_ENVIRONMENT: test
+          REPOMEDIC_MODEL_PROVIDER: mock
+        run: |
+          python -m repomedic.cli benchmark --mode both --output benchmarks/ci_evaluation_report
+
+      - name: Upload Benchmark Evaluation Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-py${{ matrix.python-version }}
+          path: benchmarks/*evaluation_report*.json
+          if-no-files-found: ignore

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repomedic"
+version = "1.0.0"
+description = "Open-weight AI-powered Python bug-repair harness with evidence-gated verification"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "MDADILIFTEKHAR" }
+]
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn[standard]>=0.32.0,<1.0.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "httpx>=0.28.0,<1.0.0",
+    "pyyaml>=6.0.2,<7.0.0",
+    "jinja2>=3.1.4,<4.0.0",
+    "python-multipart>=0.0.18",
+]
+
+[project.scripts]
+repomedic = "repomedic.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "strict"
+filterwarnings = [
+    "ignore::starlette.testclient.StarletteDeprecationWarning",
+    "ignore::DeprecationWarning",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["repomedic*"]

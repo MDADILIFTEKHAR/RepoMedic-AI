@@ -1,0 +1,33 @@
+# Render Deployment Blueprint for RepoMedic AI
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: repomedic-ai
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn repomedic.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: REPOMEDIC_ENVIRONMENT
+        value: production
+      - key: REPOMEDIC_HOSTED_MODE
+        value: "true"
+      # Hosted Inference Endpoint for open-weight model (e.g. vLLM, OpenRouter, Together, Groq)
+      - key: REPOMEDIC_MODEL_PROVIDER
+        value: openai_compatible
+      - key: REPOMEDIC_OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: REPOMEDIC_OPENAI_MODEL
+        value: qwen/qwen-2.5-coder-7b-instruct
+      - key: REPOMEDIC_OPENAI_API_KEY
+        sync: false
+      - key: REPOMEDIC_MAX_REPAIR_ATTEMPTS
+        value: "3"
+      - key: REPOMEDIC_TEST_TIMEOUT_SECONDS
+        value: "25.0"

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RepoMedic AI — Evidence-Gated Bug Repair Harness</title>
+  <meta name="description" content="Open-weight AI-powered Python bug-repair harness with deterministic policy gating, isolated sandboxing, and bounded retry loops.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dark-theme">
+  <!-- Background Glow FX -->
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">RepoMedic <span class="gradient-text">AI</span></h1>
+        <span class="brand-badge">Evidence-Gated Repair Harness</span>
+      </div>
+    </div>
+
+    <!-- Live Status Indicators -->
+    <div class="header-status-group">
+      <div class="status-pill" id="pill-model" title="Model Connectivity">
+        <span class="status-dot"></span>
+        <span class="status-label">Model: <strong id="lbl-model-name">Checking...</strong></span>
+      </div>
+      <div class="status-pill" id="pill-sandbox" title="Execution Sandbox Isolation">
+        <span class="status-dot"></span>
+        <span class="status-label">Sandbox: <strong id="lbl-sandbox-mode">Checking...</strong></span>
+      </div>
+      <div class="status-pill" id="pill-mode" title="Deployment Environment">
+        <span class="status-label">Mode: <strong id="lbl-env-mode">Hosted / Demo</strong></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-layout">
+    <!-- Left Column: Configuration & Controls -->
+    <section class="panel control-panel">
+      <div class="panel-header">
+        <h2>Repair Task Configuration</h2>
+        <span class="panel-badge">Interactive Demo</span>
+      </div>
+
+      <!-- Demo Task Selector -->
+      <div class="form-group">
+        <label for="task-select">Select Benchmark Task Fixture</label>
+        <select id="task-select" class="form-control">
+          <option value="">-- Choose a Deterministic Bug Task --</option>
+        </select>
+        <p class="field-hint">Predefined safe benchmark tasks covering arithmetic, boundaries, timeouts, and policy gates.</p>
+      </div>
+
+      <!-- Bug Description Input -->
+      <div class="form-group">
+        <label for="issue-desc">Bug Description & Expected Behavior</label>
+        <textarea id="issue-desc" class="form-control" rows="4" placeholder="Describe the bug or failure symptom..."></textarea>
+      </div>
+
+      <!-- Action Button -->
+      <div class="action-row">
+        <button id="btn-start-repair" class="btn btn-primary">
+          <span class="btn-icon">⚡</span> Run Repair Harness
+        </button>
+        <button id="btn-run-benchmark" class="btn btn-secondary">
+          <span class="btn-icon">📊</span> Run Full Benchmark (10 Tasks)
+        </button>
+      </div>
+
+      <!-- Harness Core Features Info -->
+      <div class="info-card">
+        <h3>🛡️ Evidence-Gated Invariants</h3>
+        <ul>
+          <li><strong>Zero Self-Attestation</strong>: A repair is never deemed successful merely because the model claims it works.</li>
+          <li><strong>Deterministic Patch Gate</strong>: Path traversals, protected files, and test alteration attempts are blocked before execution.</li>
+          <li><strong>Isolated Execution</strong>: Patches run strictly inside disposable worktrees and restricted containers.</li>
+          <li><strong>Bounded Loop</strong>: Genuine failure traces are fed back for up to 3 repair attempts.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Right Column: Workflow, Timeline, and Diff Viewer -->
+    <section class="panel output-panel">
+      <div class="panel-header">
+        <h2>Repair Execution & Evidence Audit</h2>
+        <div class="header-tags">
+          <span id="badge-attempt" class="badge">Attempt: 0 / 3</span>
+          <span id="badge-status" class="badge badge-idle">Idle</span>
+        </div>
+      </div>
+
+      <!-- Workflow Stepper Timeline -->
+      <div class="stepper-container">
+        <div class="step-item" id="step-inspect">
+          <div class="step-num">1</div>
+          <div class="step-title">Scan Repo</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item" id="step-baseline">
+          <div class="step-num">2</div>
+          <div class="step-title">Baseline Test</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item" id="step-generate">
+          <div class="step-num">3</div>
+          <div class="step-title">Model Diff</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item" id="step-gate">
+          <div class="step-num">4</div>
+          <div class="step-title">Policy Gate</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item" id="step-verify">
+          <div class="step-num">5</div>
+          <div class="step-title">Sandbox Test</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item" id="step-outcome">
+          <div class="step-num">6</div>
+          <div class="step-title">Verified</div>
+        </div>
+      </div>
+
+      <!-- Live Progress Message -->
+      <div id="progress-box" class="progress-box">
+        <span class="spinner" id="main-spinner"></span>
+        <span id="progress-text">Awaiting task selection...</span>
+      </div>
+
+      <!-- Results & Diff Section -->
+      <div class="tabs-container">
+        <div class="tabs-nav">
+          <button class="tab-btn active" data-tab="tab-diff">Verified Diff</button>
+          <button class="tab-btn" data-tab="tab-tests">Test Evidence</button>
+          <button class="tab-btn" data-tab="tab-audit">Audit History</button>
+        </div>
+
+        <!-- Tab 1: Diff Viewer -->
+        <div class="tab-pane active" id="tab-diff">
+          <div class="diff-header-bar">
+            <span id="diff-meta">No patch generated yet.</span>
+            <button id="btn-copy-diff" class="btn-mini" disabled>Copy Diff</button>
+          </div>
+          <pre id="diff-viewer" class="code-viewer"><code>/* Unified diff output will appear here with syntax coloring */</code></pre>
+        </div>
+
+        <!-- Tab 2: Test Evidence Comparison -->
+        <div class="tab-pane" id="tab-tests">
+          <div class="tests-split-view">
+            <div class="test-col">
+              <h4>🔴 Baseline Failure Evidence</h4>
+              <pre id="pre-baseline" class="log-viewer"><code>No baseline tests executed yet.</code></pre>
+            </div>
+            <div class="test-col">
+              <h4>🟢 Verification Test Execution</h4>
+              <pre id="pre-verification" class="log-viewer"><code>No verification tests executed yet.</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Audit History -->
+        <div class="tab-pane" id="tab-audit">
+          <div id="audit-history-list" class="audit-list">
+            <p class="empty-state">No repair history available.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Benchmark Modal Overlay -->
+  <div id="modal-benchmark" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>RepoMedic AI Benchmark Suite (10 Tasks)</h2>
+        <button id="btn-close-modal" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="benchmark-running-state" class="progress-box">
+          <span class="spinner"></span>
+          <span>Running deterministic benchmark across all 10 tasks...</span>
+        </div>
+        <div id="benchmark-results-container" class="hidden">
+          <div class="metrics-grid" id="metrics-cards"></div>
+          <div class="table-responsive">
+            <table class="benchmark-table" id="table-benchmark-tasks">
+              <thead>
+                <tr>
+                  <th>Task ID</th>
+                  <th>Category</th>
+                  <th>Status</th>
+                  <th>Attempts</th>
+                  <th>Elapsed</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>RepoMedic AI &copy; 2026. Built by <a href="https://github.com/MDADILIFTEKHAR" target="_blank">MDADILIFTEKHAR</a>. Open-weight coding model harness compliant with Agent Skill Open Standard.</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
